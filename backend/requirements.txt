@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+spotipy
+python-dotenv
+spotdl
+apscheduler
+sse-starlette
+aiosqlite
+pydantic-settings
