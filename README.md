@@ -17,13 +17,15 @@ Monitor Spotify playlists for changes and download new songs automatically.
 1. Go to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard)
 2. Create a new app
 3. Copy the **Client ID** and **Client Secret**
-4. Create a `.env` file in the project root (copy from `.env.example`):
+4. In your app settings, click **Edit Settings**, then under **Redirect URIs** add:
+   `http://localhost:8000/api/auth/spotify/callback` and click **Add**, then **Save**.
+5. Create a `.env` file in the project root (copy from `.env.example`):
 
 ```bash
 cp .env.example .env
 ```
 
-Then fill in your credentials.
+Then fill in your credentials (including `SPOTIFY_REDIRECT_URI=http://localhost:8000/api/auth/spotify/callback` if not already present).
 
 ### 2. Backend
 

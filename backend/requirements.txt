@@ -8,3 +8,4 @@ apscheduler
 sse-starlette
 aiosqlite
 pydantic-settings
+mutagen

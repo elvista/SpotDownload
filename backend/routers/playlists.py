@@ -20,6 +20,7 @@ class TrackResponse(BaseModel):
     name: str
     artist: str
     album: str
+    genre: str = ""
     duration_ms: int
     image_url: str
     spotify_url: str
@@ -83,6 +84,7 @@ async def add_playlist(body: PlaylistCreate, db: Session = Depends(get_db)):
             name=t["name"],
             artist=t["artist"],
             album=t["album"],
+            genre=t.get("genre", ""),
             duration_ms=t["duration_ms"],
             image_url=t.get("image_url", ""),
             spotify_url=t.get("spotify_url", ""),

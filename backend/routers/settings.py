@@ -29,11 +29,13 @@ def set_setting(db: Session, key: str, value: str):
 class SettingsResponse(BaseModel):
     download_path: str
     monitor_interval_minutes: int
+    archive_playlist_name: str
 
 
 class UpdateSettingsRequest(BaseModel):
     download_path: str | None = None
     monitor_interval_minutes: int | None = None
+    archive_playlist_name: str | None = None
 
 
 class ValidatePathResponse(BaseModel):
@@ -50,9 +52,11 @@ def get_settings(db: Session = Depends(get_db)):
         db, "monitor_interval_minutes",
         str(app_config.MONITOR_INTERVAL_MINUTES),
     )
+    archive_playlist_name = get_setting(db, "archive_playlist_name", "DJ Archive")
     return SettingsResponse(
         download_path=download_path,
         monitor_interval_minutes=int(monitor_interval),
+        archive_playlist_name=archive_playlist_name,
     )
 
 
@@ -67,6 +71,12 @@ def update_settings(body: UpdateSettingsRequest, db: Session = Depends(get_db)):
         set_setting(
             db, "monitor_interval_minutes", str(body.monitor_interval_minutes)
         )
+    
+    if body.archive_playlist_name is not None:
+        # Trim whitespace
+        archive_name = body.archive_playlist_name.strip()
+        if archive_name:
+            set_setting(db, "archive_playlist_name", archive_name)
 
     return get_settings(db)
 

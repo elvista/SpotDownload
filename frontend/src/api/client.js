@@ -62,4 +62,9 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ download_path: path }),
   }),
+
+  // Auth
+  getAuthStatus: () => request('/auth/spotify/status'),
+  
+  disconnectSpotify: () => request('/auth/spotify', { method: 'DELETE' }),
 };

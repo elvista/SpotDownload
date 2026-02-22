@@ -1,8 +1,12 @@
 import asyncio
 import re
+import time
+import logging
 import spotipy
-from spotipy.oauth2 import SpotifyClientCredentials
+from spotipy.oauth2 import SpotifyClientCredentials, SpotifyOAuth
 from config import settings
+
+logger = logging.getLogger("spotdownload.spotify")
 
 
 # Module-level singleton
@@ -19,6 +23,24 @@ def get_spotify_service():
 class SpotifyService:
     def __init__(self):
         self._sp = None
+        self._artist_genre_cache: dict[str, str] = {}
+
+    def _get_artist_genre_cached(self, artist_id: str) -> str:
+        """Return genre for artist (first genre). Uses in-memory cache."""
+        if not artist_id:
+            return ""
+        if artist_id in self._artist_genre_cache:
+            return self._artist_genre_cache[artist_id]
+        try:
+            artist = self.sp.artist(artist_id)
+            genres = artist.get("genres") or []
+            genre = genres[0] if genres else ""
+            self._artist_genre_cache[artist_id] = genre
+            return genre
+        except Exception as e:
+            logger.warning(f"Failed to fetch artist genre for {artist_id}: {e}")
+            self._artist_genre_cache[artist_id] = ""
+            return ""
 
     @property
     def sp(self):
@@ -62,6 +84,8 @@ class SpotifyService:
                 track = item.get("track")
                 if not track or not track.get("id"):
                     continue
+                artist_id = track["artists"][0]["id"] if track.get("artists") else None
+                genre = self._get_artist_genre_cached(artist_id) if artist_id else ""
                 tracks.append({
                     "id": track["id"],
                     "name": track["name"],
@@ -74,6 +98,7 @@ class SpotifyService:
                         else ""
                     ),
                     "spotify_url": track["external_urls"].get("spotify", ""),
+                    "genre": genre,
                 })
 
             next_page = result["tracks"].get("next")
@@ -100,3 +125,137 @@ class SpotifyService:
     def get_playlist_sync(self, playlist_id: str) -> dict | None:
         """Blocking version for use in sync contexts (e.g. APScheduler)."""
         return self._get_playlist_sync(playlist_id)
+
+    def get_user_client(self, access_token: str, refresh_token: str, expires_at: int):
+        """Get a user-authenticated Spotify client with token refresh."""
+        auth_manager = SpotifyOAuth(
+            client_id=settings.SPOTIFY_CLIENT_ID,
+            client_secret=settings.SPOTIFY_CLIENT_SECRET,
+            redirect_uri=settings.SPOTIFY_REDIRECT_URI,
+            cache_path=None,
+        )
+        
+        # Manually set token info
+        token_info = {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "expires_at": expires_at,
+            "token_type": "Bearer",
+            "scope": "playlist-modify-public playlist-modify-private playlist-read-private",
+        }
+        
+        # Check if token needs refresh
+        if expires_at < int(time.time()):
+            logger.info("Access token expired, refreshing...")
+            token_info = auth_manager.refresh_access_token(refresh_token)
+        
+        return spotipy.Spotify(auth=token_info["access_token"]), token_info
+
+    def _get_or_create_archive_playlist_sync(
+        self, sp_user, archive_name: str
+    ) -> str | None:
+        """Find or create the single archive playlist by name. Returns playlist ID."""
+        try:
+            user_id = sp_user.me()["id"]
+            
+            # Search user's playlists for exact name match
+            offset = 0
+            limit = 50
+            while True:
+                results = sp_user.current_user_playlists(limit=limit, offset=offset)
+                for playlist in results["items"]:
+                    if playlist["name"] == archive_name:
+                        logger.info(f"Found existing archive playlist: {archive_name} (id: {playlist['id']})")
+                        return playlist["id"]
+                
+                if not results["next"]:
+                    break
+                offset += limit
+            
+            # No playlist found, create one
+            logger.info(f"Creating new archive playlist: {archive_name}")
+            new_playlist = sp_user.user_playlist_create(
+                user_id,
+                archive_name,
+                public=False,
+                description="Archive for downloaded tracks from SpotDownload"
+            )
+            return new_playlist["id"]
+        
+        except Exception as e:
+            logger.error(f"Failed to get or create archive playlist: {e}")
+            return None
+
+    async def get_or_create_archive_playlist(
+        self, sp_user, archive_name: str
+    ) -> str | None:
+        """Non-blocking: find or create the single archive playlist by name."""
+        return await asyncio.to_thread(
+            self._get_or_create_archive_playlist_sync, sp_user, archive_name
+        )
+
+    def _add_tracks_to_playlist_sync(
+        self, sp_user, playlist_id: str, track_uris: list[str]
+    ) -> bool:
+        """Add tracks to playlist in batches of 100."""
+        try:
+            # Spotify allows max 100 tracks per request
+            batch_size = 100
+            for i in range(0, len(track_uris), batch_size):
+                batch = track_uris[i:i + batch_size]
+                sp_user.playlist_add_items(playlist_id, batch)
+                logger.info(f"Added {len(batch)} tracks to playlist {playlist_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to add tracks to playlist: {e}")
+            return False
+
+    async def add_tracks_to_playlist(
+        self, sp_user, playlist_id: str, track_uris: list[str]
+    ) -> bool:
+        """Non-blocking: add tracks to playlist."""
+        return await asyncio.to_thread(
+            self._add_tracks_to_playlist_sync, sp_user, playlist_id, track_uris
+        )
+
+    def _empty_playlist_sync(self, sp_user, playlist_id: str) -> bool:
+        """Remove all tracks from a playlist."""
+        try:
+            # Get all track URIs
+            track_uris = []
+            offset = 0
+            limit = 100
+            
+            while True:
+                results = sp_user.playlist_tracks(
+                    playlist_id, limit=limit, offset=offset, fields="items.track.uri,next"
+                )
+                for item in results["items"]:
+                    if item["track"] and item["track"]["uri"]:
+                        track_uris.append(item["track"]["uri"])
+                
+                if not results["next"]:
+                    break
+                offset += limit
+            
+            if not track_uris:
+                logger.info(f"Playlist {playlist_id} is already empty")
+                return True
+            
+            # Remove in batches of 100
+            batch_size = 100
+            for i in range(0, len(track_uris), batch_size):
+                batch = track_uris[i:i + batch_size]
+                sp_user.playlist_remove_all_occurrences_of_items(playlist_id, batch)
+                logger.info(f"Removed {len(batch)} tracks from playlist {playlist_id}")
+            
+            logger.info(f"Emptied playlist {playlist_id} ({len(track_uris)} tracks removed)")
+            return True
+        
+        except Exception as e:
+            logger.error(f"Failed to empty playlist: {e}")
+            return False
+
+    async def empty_playlist(self, sp_user, playlist_id: str) -> bool:
+        """Non-blocking: remove all tracks from playlist."""
+        return await asyncio.to_thread(self._empty_playlist_sync, sp_user, playlist_id)

@@ -31,6 +31,7 @@ class Track(Base):
     name = Column(String, nullable=False)
     artist = Column(String, nullable=False)
     album = Column(String, default="")
+    genre = Column(String, default="")
     duration_ms = Column(Integer, default=0)
     image_url = Column(String, default="")
     spotify_url = Column(String, default="")

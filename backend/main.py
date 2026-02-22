@@ -7,7 +7,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from database import init_db, SessionLocal
 from config import settings as app_config
-from routers import playlists, downloads, monitor
+from routers import playlists, downloads, monitor, auth
 from routers import settings as settings_router
 from services.monitor import MonitorService
 
@@ -66,6 +66,7 @@ app.include_router(playlists.router, prefix="/api")
 app.include_router(downloads.router, prefix="/api")
 app.include_router(monitor.router, prefix="/api")
 app.include_router(settings_router.router, prefix="/api")
+app.include_router(auth.router, prefix="/api")
 
 
 @app.get("/api/health")

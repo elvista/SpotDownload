@@ -43,6 +43,7 @@ def refresh_playlist_tracks(
             name=t["name"],
             artist=t["artist"],
             album=t["album"],
+            genre=t.get("genre", ""),
             duration_ms=t["duration_ms"],
             image_url=t.get("image_url", ""),
             spotify_url=t.get("spotify_url", ""),
