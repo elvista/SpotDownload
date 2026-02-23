@@ -1,15 +1,66 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import TrackRow from './TrackRow';
-import { DownloadIcon, PlusIcon, RefreshIcon, MusicIcon } from './Icons';
+import { DownloadIcon, PlusIcon, RefreshIcon, MusicIcon, BackIcon, TrashIcon } from './Icons';
 
-export default React.memo(function TrackList({ playlist, onDownload, onDownloadAll, onDownloadNew, onRefresh, downloadStatus, refreshing }) {
+export default React.memo(function TrackList({ playlist, onDownload, onDownloadAll, onDownloadNew, onRefresh, onGoHome, onRemovePlaylist, downloadStatus, refreshing }) {
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const tracks = playlist?.tracks ?? [];
+  const newTracks = useMemo(() => tracks.filter(t => t.is_new), [tracks]);
+  const downloadedCount = useMemo(() => tracks.filter(t => t.is_downloaded).length, [tracks]);
+  const filteredTracks = useMemo(() => {
+    let list = tracks;
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      list = list.filter(t =>
+        (t.name && t.name.toLowerCase().includes(q)) ||
+        (t.artist && t.artist.toLowerCase().includes(q)) ||
+        (t.album && t.album.toLowerCase().includes(q))
+      );
+    }
+    // Undownloaded tracks first, then downloaded (stable sort)
+    list = [...list].sort((a, b) =>
+      a.is_downloaded === b.is_downloaded ? 0 : a.is_downloaded ? 1 : -1
+    );
+    return list;
+  }, [tracks, searchQuery]);
+
   if (!playlist) return null;
-
-  const newTracks = useMemo(() => playlist.tracks.filter(t => t.is_new), [playlist.tracks]);
-  const downloadedCount = useMemo(() => playlist.tracks.filter(t => t.is_downloaded).length, [playlist.tracks]);
 
   return (
     <div className="animate-fade-in mt-8">
+      {/* Back bar */}
+      {(onGoHome || onRemovePlaylist) && (
+        <div className="flex items-center justify-between gap-4 mb-6">
+          {onGoHome && (
+            <button
+              type="button"
+              onClick={onGoHome}
+              className="flex items-center gap-2 text-spotify-light-gray hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-spotify-green focus:ring-offset-2 focus:ring-offset-spotify-black rounded-lg px-2 py-1 -ml-2"
+            >
+              <BackIcon className="w-5 h-5" />
+              <span>Back to playlists</span>
+            </button>
+          )}
+          {onRemovePlaylist && (
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm('Remove this playlist from monitoring?')) {
+                  onRemovePlaylist(playlist.id);
+                  onGoHome?.();
+                }
+              }}
+              className="flex items-center gap-2 text-spotify-light-gray hover:text-red-400 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500/50 rounded-lg px-3 py-1.5"
+              title="Remove from monitoring"
+            >
+              <TrashIcon className="w-4 h-4" />
+              <span>Remove from monitoring</span>
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Playlist Header */}
       <div className="flex flex-col sm:flex-row gap-6 mb-8">
         {playlist.image_url ? (
@@ -57,6 +108,17 @@ export default React.memo(function TrackList({ playlist, onDownload, onDownloadA
         </button>
       </div>
 
+      {/* Search */}
+      <div className="mb-4">
+        <input
+          type="search"
+          placeholder="Search tracks by title, artist, album..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full max-w-md px-4 py-2 bg-spotify-mid-gray border border-white/10 rounded-xl text-white placeholder-gray-500 text-sm focus:outline-none focus:border-spotify-green"
+        />
+      </div>
+
       {/* Track Table */}
       <div className="bg-spotify-dark-gray/50 rounded-xl overflow-hidden">
         <table className="w-full">
@@ -74,7 +136,7 @@ export default React.memo(function TrackList({ playlist, onDownload, onDownloadA
             </tr>
           </thead>
           <tbody>
-            {playlist.tracks.map((track, index) => (
+            {filteredTracks.map((track, index) => (
               <TrackRow
                 key={track.id}
                 track={track}
@@ -85,7 +147,7 @@ export default React.memo(function TrackList({ playlist, onDownload, onDownloadA
             ))}
           </tbody>
         </table>
-        {playlist.tracks.length === 0 && (
+        {filteredTracks.length === 0 && (
           <div className="py-12 text-center text-spotify-light-gray">
             <p>No tracks found in this playlist.</p>
           </div>

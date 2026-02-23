@@ -1,12 +1,16 @@
 import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
-from sqlalchemy.orm import Session
 from spotipy.oauth2 import SpotifyOAuth
+from sqlalchemy.orm import Session
 
+from config import settings
 from database import get_db
 from models import AppSetting
-from config import settings
+from security import decrypt_token, encrypt_token
+
+TOKEN_KEYS = ("spotify_access_token", "spotify_refresh_token")
 
 # Exact redirect URI the app sends to Spotify (must match Spotify Dashboard exactly)
 SPOTIFY_REDIRECT_URI_EXACT = "http://localhost:8000/api/auth/spotify/callback"
@@ -35,10 +39,15 @@ def get_spotify_oauth():
 
 def get_setting(db: Session, key: str, default: str = "") -> str:
     row = db.query(AppSetting).filter(AppSetting.key == key).first()
-    return row.value if row else default
+    value = row.value if row else default
+    if key in TOKEN_KEYS and value:
+        value = decrypt_token(value, getattr(settings, "ENCRYPTION_KEY", None) or "")
+    return value
 
 
 def set_setting(db: Session, key: str, value: str):
+    if key in TOKEN_KEYS and value:
+        value = encrypt_token(value, getattr(settings, "ENCRYPTION_KEY", None) or "")
     row = db.query(AppSetting).filter(AppSetting.key == key).first()
     if row:
         row.value = value
@@ -61,22 +70,22 @@ def spotify_callback(code: str = None, error: str = None, db: Session = Depends(
     if error:
         logger.error(f"Spotify auth error: {error}")
         return RedirectResponse(url="http://localhost:5173?auth=error")
-    
+
     if not code:
         raise HTTPException(status_code=400, detail="No authorization code provided")
-    
+
     try:
         sp_oauth = get_spotify_oauth()
         token_info = sp_oauth.get_access_token(code, as_dict=True, check_cache=False)
-        
+
         # Store tokens in database
         set_setting(db, "spotify_access_token", token_info["access_token"])
         set_setting(db, "spotify_refresh_token", token_info["refresh_token"])
         set_setting(db, "spotify_token_expires_at", str(token_info["expires_at"]))
-        
+
         logger.info("Spotify authentication successful")
         return RedirectResponse(url="http://localhost:5173?auth=success")
-    
+
     except Exception as e:
         logger.error(f"Failed to exchange code for token: {e}")
         return RedirectResponse(url="http://localhost:5173?auth=error")

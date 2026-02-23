@@ -1,0 +1,16 @@
+# Ruff linting and formatting for SpotDownload backend
+# Run: ruff check . && ruff format .
+
+target-version = "py311"
+line-length = 100
+exclude = ["venv", ".venv", "__pycache__", "alembic/versions", "scripts"]
+
+[lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]  # line length handled by formatter
+
+[lint.isort]
+known-first-party = ["routers", "services", "models", "database", "config"]
+
+[format]
+quote-style = "double"

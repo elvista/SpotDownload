@@ -2,13 +2,14 @@ import React, { useMemo } from 'react';
 import { SpinnerIcon, CheckIcon, ErrorIcon } from './Icons';
 
 export default React.memo(function DownloadProgress({ downloads, onClear }) {
-  if (!downloads || downloads.length === 0) return null;
-
+  const list = downloads ?? [];
   const { active, completed, failed } = useMemo(() => ({
-    active: downloads.filter(d => d.status === 'downloading'),
-    completed: downloads.filter(d => d.status === 'completed'),
-    failed: downloads.filter(d => d.status === 'failed'),
+    active: list.filter(d => d.status === 'downloading'),
+    completed: list.filter(d => d.status === 'completed'),
+    failed: list.filter(d => d.status === 'failed'),
   }), [downloads]);
+
+  if (!downloads || downloads.length === 0) return null;
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-40 bg-spotify-dark-gray border-t border-white/10 shadow-2xl animate-fade-in">

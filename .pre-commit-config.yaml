@@ -1,0 +1,20 @@
+# Pre-commit hooks for SpotDownload
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff (backend)
+        entry: bash -c "cd backend && ruff check . && ruff format --check ."
+        language: system
+        types: [python]
+        files: ^backend/
+
+      - id: eslint
+        name: eslint (frontend)
+        entry: bash -c "cd frontend && npx eslint . --max-warnings 0"
+        language: system
+        types: [javascript, jsx]
+        files: ^frontend/src/

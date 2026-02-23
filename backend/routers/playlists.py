@@ -1,13 +1,24 @@
+import re
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session, selectinload
-from pydantic import BaseModel
+
 from database import get_db
-from services.spotify import get_spotify_service
-from services.sync_ops import refresh_playlist_tracks
 from models import Playlist, Track
-from datetime import datetime, timezone
+from routers.auth import get_setting, set_setting
+from services.spotify import SpotifyAuthError, get_spotify_service
+from services.sync_ops import refresh_playlist_tracks
 
 router = APIRouter(tags=["playlists"])
+
+# Spotify playlist URL patterns (must match before calling API; query string e.g. ?si=... allowed)
+SPOTIFY_PLAYLIST_URL_RE = re.compile(
+    r"^https?://(open\.)?spotify\.com/playlist/[a-zA-Z0-9_-]+(\?[^#]*)?$|^spotify:playlist:[a-zA-Z0-9_-]+$",
+    re.IGNORECASE,
+)
 
 
 class PlaylistCreate(BaseModel):
@@ -27,6 +38,11 @@ class TrackResponse(BaseModel):
     is_new: bool
     is_downloaded: bool
 
+    @field_validator("genre", "image_url", "spotify_url", mode="before")
+    @classmethod
+    def empty_str_none(cls, v):
+        return v if v is not None else ""
+
     class Config:
         from_attributes = True
 
@@ -44,23 +60,57 @@ class PlaylistResponse(BaseModel):
     last_checked: datetime | None
     tracks: list[TrackResponse] = []
 
+    @field_validator("description", "owner", "image_url", "spotify_url", mode="before")
+    @classmethod
+    def empty_str_none(cls, v):
+        return v if v is not None else ""
+
     class Config:
         from_attributes = True
 
 
 @router.post("/playlists", response_model=PlaylistResponse)
 async def add_playlist(body: PlaylistCreate, db: Session = Depends(get_db)):
+    url = (body.url or "").strip()
+    if not url or not SPOTIFY_PLAYLIST_URL_RE.match(url):
+        raise HTTPException(status_code=400, detail="Invalid Spotify playlist URL")
     spotify = get_spotify_service()
-    playlist_id = spotify.extract_playlist_id(body.url)
+    playlist_id = spotify.extract_playlist_id(url)
     if not playlist_id:
         raise HTTPException(status_code=400, detail="Invalid Spotify playlist URL")
 
-    existing = db.query(Playlist).filter(Playlist.spotify_id == playlist_id).first()
+    existing = (
+        db.query(Playlist)
+        .options(selectinload(Playlist.tracks))
+        .filter(Playlist.spotify_id == playlist_id)
+        .first()
+    )
     if existing:
-        raise HTTPException(status_code=409, detail="Playlist already added")
+        payload = {
+            "detail": "Playlist already added",
+            "playlist": PlaylistResponse.model_validate(existing).model_dump(mode="json"),
+        }
+        return JSONResponse(status_code=409, content=payload)
 
-    # Non-blocking Spotify call
-    data = await spotify.get_playlist(playlist_id)
+    # Prefer user token when connected (fixes "not found" for some editorial playlists)
+    data = None
+    access_token = get_setting(db, "spotify_access_token", "")
+    refresh_token = get_setting(db, "spotify_refresh_token", "")
+    expires_at_str = get_setting(db, "spotify_token_expires_at", "0")
+    if access_token and refresh_token:
+        try:
+            sp_user, updated_token_info = spotify.get_user_client(
+                access_token, refresh_token, int(expires_at_str or 0)
+            )
+            if updated_token_info["access_token"] != access_token:
+                set_setting(db, "spotify_access_token", updated_token_info["access_token"])
+                set_setting(db, "spotify_token_expires_at", str(updated_token_info["expires_at"]))
+            data = await spotify.get_playlist(playlist_id, sp_client=sp_user)
+        except SpotifyAuthError:
+            pass  # Fall back to client credentials
+
+    if data is None:
+        data = await spotify.get_playlist(playlist_id)
     if not data:
         raise HTTPException(status_code=404, detail="Playlist not found on Spotify")
 
@@ -72,7 +122,7 @@ async def add_playlist(body: PlaylistCreate, db: Session = Depends(get_db)):
         image_url=data.get("image_url", ""),
         track_count=len(data["tracks"]),
         spotify_url=data.get("spotify_url", ""),
-        last_checked=datetime.now(timezone.utc),
+        last_checked=datetime.now(UTC),
     )
     db.add(playlist)
     db.flush()
@@ -98,8 +148,18 @@ async def add_playlist(body: PlaylistCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/playlists", response_model=list[PlaylistResponse])
-def list_playlists(db: Session = Depends(get_db)):
-    return db.query(Playlist).options(selectinload(Playlist.tracks)).all()
+def list_playlists(
+    db: Session = Depends(get_db),
+    limit: int | None = None,
+    offset: int = 0,
+):
+    """List playlists with optional pagination (limit, offset)."""
+    q = db.query(Playlist).options(selectinload(Playlist.tracks)).order_by(Playlist.id)
+    if offset:
+        q = q.offset(offset)
+    if limit is not None and limit > 0:
+        q = q.limit(limit)
+    return q.all()
 
 
 @router.get("/playlists/{playlist_id}", response_model=PlaylistResponse)

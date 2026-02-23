@@ -10,7 +10,7 @@ export default React.memo(function TrackRow({ track, index, onDownload, download
   }, [onDownload, track.id]);
 
   return (
-    <tr className="group hover:bg-white/5 transition-colors">
+    <tr className={`group transition-colors ${!track.is_downloaded ? 'bg-spotify-green/10 hover:bg-spotify-green/15' : 'hover:bg-white/5'}`}>
       <td className="py-3 px-4 text-sm text-spotify-light-gray w-12">
         {index + 1}
       </td>

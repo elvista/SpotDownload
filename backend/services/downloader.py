@@ -1,20 +1,30 @@
+"""Download audio via yt-dlp and apply Spotify metadata (ID3 tags, cover art)."""
+
 import asyncio
+import logging
 import os
 import re
-import logging
 import urllib.request
 
-from mutagen.id3 import ID3, TIT2, TPE1, TALB, TCON, APIC
+from mutagen.id3 import APIC, ID3, TALB, TCON, TIT2, TPE1
 from mutagen.mp3 import MP3
 
 logger = logging.getLogger("spotdownload.downloader")
 
 
 def _sanitize_filename(s: str) -> str:
-    """Remove or replace characters that are invalid in filenames."""
-    s = re.sub(r'[<>:"/\\|?*]', "", s)
-    s = s.strip() or "Unknown"
-    return s[:200]
+    """Remove or replace characters that are invalid in filenames. Max 255 chars."""
+    if not s or not isinstance(s, str):
+        return "Unknown"
+    # Remove path separators and other invalid chars
+    s = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", s)
+    # Normalize whitespace and strip
+    s = " ".join(s.split()).strip() or "Unknown"
+    # Truncate to 255 bytes for filesystem compatibility (UTF-8)
+    if len(s.encode("utf-8")) > 255:
+        while s and len(s.encode("utf-8")) > 255:
+            s = s[:-1]
+    return s or "Unknown"
 
 
 def _unique_path(download_path: str, base_name: str, ext: str = "mp3") -> str:
@@ -141,19 +151,29 @@ class DownloaderService:
                 logger.error(f"Expected file missing after yt-dlp: {expected_mp3}")
                 return False
 
-            # Set ID3 tags from Spotify (best-effort: keep file even if APIC fails)
+            if os.path.getsize(expected_mp3) <= 0:
+                logger.error(f"Downloaded file is empty: {expected_mp3}")
+                try:
+                    os.remove(expected_mp3)
+                except OSError:
+                    pass
+                return False
+
+            # Set ID3 tags from Spotify in thread (blocking: file I/O + cover fetch)
             try:
-                _apply_id3_spotify(expected_mp3, name, artist, album, image_url, genre)
+                await asyncio.to_thread(
+                    _apply_id3_spotify, expected_mp3, name, artist, album, image_url, genre
+                )
             except Exception as e:
                 logger.warning(f"ID3 tagging failed, keeping file: {e}")
 
-            # Rename to friendly name
+            # Rename to friendly name (blocking file op)
             safe_artist = _sanitize_filename(artist)
             safe_name = _sanitize_filename(name)
             base_name = f"{safe_artist} - {safe_name}"
             final_path = _unique_path(download_path, base_name, "mp3")
             try:
-                os.rename(expected_mp3, final_path)
+                await asyncio.to_thread(os.rename, expected_mp3, final_path)
             except OSError as e:
                 logger.warning(f"Rename failed, leaving as {expected_mp3}: {e}")
 
@@ -161,9 +181,7 @@ class DownloaderService:
             return True
 
         except FileNotFoundError:
-            raise RuntimeError(
-                "yt-dlp not found. Install it with: pip install yt-dlp"
-            )
+            raise RuntimeError("yt-dlp not found. Install it with: pip install yt-dlp")
         except Exception as e:
             logger.error(f"Download error for '{search_query}': {e}")
             raise RuntimeError(f"Download failed: {e}")

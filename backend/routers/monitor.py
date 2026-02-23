@@ -1,7 +1,7 @@
 import asyncio
 import json
 from collections import deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -21,14 +21,16 @@ notifications: deque[dict] = deque(maxlen=200)
 def _add_notification(result: dict):
     """Add a notification if changes were detected."""
     if result.get("added", 0) > 0 or result.get("removed", 0) > 0:
-        notifications.append({
-            "type": "playlist_changed",
-            "playlist_name": result.get("playlist_name", ""),
-            "playlist_id": result.get("playlist_id"),
-            "added": result.get("added", 0),
-            "removed": result.get("removed", 0),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
+        notifications.append(
+            {
+                "type": "playlist_changed",
+                "playlist_name": result.get("playlist_name", ""),
+                "playlist_id": result.get("playlist_id"),
+                "added": result.get("added", 0),
+                "removed": result.get("removed", 0),
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+        )
 
 
 @router.post("/monitor/check-all")

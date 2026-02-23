@@ -11,7 +11,9 @@ async function request(path, options = {}) {
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: 'Request failed' }));
-    throw new Error(error.detail || `HTTP ${res.status}`);
+    const err = new Error(error.detail || `HTTP ${res.status}`);
+    if (res.status === 409 && error.playlist) err.existingPlaylist = error.playlist;
+    throw err;
   }
 
   return res.json();

@@ -8,11 +8,15 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
-from database import get_db, SessionLocal
-from models import Track, AppSetting, Playlist
 from config import DEFAULT_DOWNLOAD_PATH
+from config import settings as app_settings
+from database import SessionLocal, get_db
+from models import AppSetting, Playlist, Track
+from security import decrypt_token, encrypt_token
 from services.downloader import DownloaderService
-from services.spotify import get_spotify_service
+from services.spotify import SpotifyAuthError, get_spotify_service
+
+TOKEN_KEYS = ("spotify_access_token", "spotify_refresh_token")
 
 router = APIRouter(tags=["downloads"])
 
@@ -87,11 +91,7 @@ async def start_download(body: DownloadRequest, db: Session = Depends(get_db)):
     # Launch download in background with its own DB session
     asyncio.create_task(
         _run_downloads(
-            track_data, 
-            track_ids, 
-            download_path,
-            source_playlist_id,
-            source_playlist_spotify_id
+            track_data, track_ids, download_path, source_playlist_id, source_playlist_spotify_id
         )
     )
 
@@ -99,111 +99,121 @@ async def start_download(body: DownloadRequest, db: Session = Depends(get_db)):
 
 
 def _get_setting_from_db(key: str, default: str = "") -> str:
-    """Helper to get setting from DB (sync)."""
+    """Helper to get setting from DB (sync). Decrypts token keys if encryption is enabled."""
     db = SessionLocal()
     try:
         row = db.query(AppSetting).filter(AppSetting.key == key).first()
-        return row.value if row else default
+        value = row.value if row else default
+        if key in TOKEN_KEYS and value:
+            value = decrypt_token(value, getattr(app_settings, "ENCRYPTION_KEY", None) or "")
+        return value
     finally:
         db.close()
 
 
 async def _post_download_workflow(
-    track_data: list[dict], 
-    successful_ids: list[int], 
-    monitored_playlist_spotify_id: str
+    track_data: list[dict], successful_ids: list[int], monitored_playlist_spotify_id: str
 ):
     """
-    Post-download workflow: move successful tracks to archive playlist 
+    Post-download workflow: move successful tracks to archive playlist
     and empty the monitored playlist on Spotify.
     """
     import logging
+
     logger = logging.getLogger("spotdownload.downloads")
-    
+
     try:
         # Get user tokens from DB
         access_token = _get_setting_from_db("spotify_access_token", "")
         refresh_token = _get_setting_from_db("spotify_refresh_token", "")
         expires_at_str = _get_setting_from_db("spotify_token_expires_at", "0")
-        
+
         if not refresh_token:
-            logger.warning("No Spotify user token found. Skipping post-download workflow. Connect Spotify account to enable archive and empty features.")
+            logger.warning(
+                "No Spotify user token found. Skipping post-download workflow. Connect Spotify account to enable archive and empty features."
+            )
             return
-        
+
         expires_at = int(expires_at_str)
-        
+
         # Get archive playlist name from settings
         archive_name = _get_setting_from_db("archive_playlist_name", "DJ Archive")
-        
+
         # Get user-authenticated Spotify client
         spotify = get_spotify_service()
         sp_user, updated_token_info = spotify.get_user_client(
             access_token, refresh_token, expires_at
         )
-        
+
         # Update tokens in DB if they were refreshed
         if updated_token_info["access_token"] != access_token:
             db = SessionLocal()
             try:
-                def set_setting(key: str, value: str):
+
+                def _set_setting(key: str, value: str):
+                    if key in TOKEN_KEYS and value:
+                        value = encrypt_token(value, getattr(app_settings, "ENCRYPTION_KEY", None) or "")
                     row = db.query(AppSetting).filter(AppSetting.key == key).first()
                     if row:
                         row.value = value
                     else:
                         db.add(AppSetting(key=key, value=value))
-                
-                set_setting("spotify_access_token", updated_token_info["access_token"])
-                set_setting("spotify_token_expires_at", str(updated_token_info["expires_at"]))
+
+                _set_setting("spotify_access_token", updated_token_info["access_token"])
+                _set_setting("spotify_token_expires_at", str(updated_token_info["expires_at"]))
                 db.commit()
             finally:
                 db.close()
-        
+
         # 1. Get or create archive playlist
-        archive_playlist_id = await spotify.get_or_create_archive_playlist(
-            sp_user, archive_name
-        )
-        
+        archive_playlist_id = await spotify.get_or_create_archive_playlist(sp_user, archive_name)
+
         if not archive_playlist_id:
             logger.error("Failed to get or create archive playlist")
             return
-        
+
         # 2. Build Spotify URIs for successful tracks
         successful_track_uris = []
         for track in track_data:
             if track["id"] in successful_ids and track.get("spotify_id"):
                 uri = f"spotify:track:{track['spotify_id']}"
                 successful_track_uris.append(uri)
-        
+
         if not successful_track_uris:
             logger.warning("No Spotify URIs to add to archive")
             return
-        
+
         # 3. Add successful tracks to archive playlist
-        logger.info(f"Adding {len(successful_track_uris)} tracks to archive playlist '{archive_name}'")
+        logger.info(
+            f"Adding {len(successful_track_uris)} tracks to archive playlist '{archive_name}'"
+        )
         success = await spotify.add_tracks_to_playlist(
             sp_user, archive_playlist_id, successful_track_uris
         )
-        
+
         if not success:
             logger.error("Failed to add tracks to archive playlist")
             return
-        
+
         # 4. Empty the monitored playlist
         logger.info(f"Emptying monitored playlist {monitored_playlist_spotify_id}")
         success = await spotify.empty_playlist(sp_user, monitored_playlist_spotify_id)
-        
+
         if success:
             logger.info("Post-download workflow completed successfully")
         else:
             logger.error("Failed to empty monitored playlist")
-    
+
+    except SpotifyAuthError as e:
+        logger.warning(
+            "Spotify authentication expired. Reconnect in Settings. %s",
+            e,
+        )
     except Exception as e:
         logger.error(f"Post-download workflow failed: {e}", exc_info=True)
 
 
-async def _download_one(
-    t: dict, download_path: str, sem: asyncio.Semaphore
-):
+async def _download_one(t: dict, download_path: str, sem: asyncio.Semaphore):
     """Download a single track with semaphore-limited concurrency."""
     track_id = str(t["id"])
     download_progress[track_id] = {
@@ -237,19 +247,17 @@ async def _download_one(
 
 
 async def _run_downloads(
-    track_data: list[dict], 
-    track_ids: list[int], 
+    track_data: list[dict],
+    track_ids: list[int],
     download_path: str,
     source_playlist_id: int | None = None,
-    source_playlist_spotify_id: str | None = None
+    source_playlist_spotify_id: str | None = None,
 ):
     """Run concurrent downloads with own DB session."""
     sem = asyncio.Semaphore(CONCURRENT_DOWNLOADS)
 
     # Run all downloads concurrently
-    results = await asyncio.gather(
-        *[_download_one(t, download_path, sem) for t in track_data]
-    )
+    results = await asyncio.gather(*[_download_one(t, download_path, sem) for t in track_data])
 
     # Update DB with successful downloads using a fresh session
     successful_ids = [r for r in results if r is not None]
@@ -265,9 +273,7 @@ async def _run_downloads(
 
     # Post-download workflow: move to archive and empty monitored playlist
     if source_playlist_id and source_playlist_spotify_id and successful_ids:
-        await _post_download_workflow(
-            track_data, successful_ids, source_playlist_spotify_id
-        )
+        await _post_download_workflow(track_data, successful_ids, source_playlist_spotify_id)
 
     # Evict old entries if over limit
     while len(download_progress) > MAX_PROGRESS_ENTRIES:

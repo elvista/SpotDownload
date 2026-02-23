@@ -134,6 +134,55 @@ Key frontend design decisions:
 | SSE `/api/downloads/progress` | Server → Client | Real-time download status updates |
 | SSE `/api/monitor/notifications` | Server → Client | Playlist change notifications |
 
+### Data flow (sequence)
+
+**Download flow:** User triggers download → API enqueues tracks → background tasks run yt-dlp → ID3 tags applied → progress sent via SSE → optional post-download workflow (archive + empty playlist).
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant Frontend
+  participant API
+  participant Downloader
+  participant Spotify
+
+  User->>Frontend: Click Download
+  Frontend->>API: POST /api/downloads
+  API->>API: Enqueue tracks
+  API-->>Frontend: 200
+  loop For each track
+    API->>Downloader: yt-dlp + ID3
+    Downloader-->>API: progress
+    API-->>Frontend: SSE progress
+  end
+  API->>Spotify: Archive + empty playlist
+```
+
+**OAuth flow:** User clicks Connect → redirect to Spotify → user authorizes → callback with code → backend exchanges code for tokens → tokens stored (optionally encrypted) → status returned.
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant Frontend
+  participant Backend
+  participant Spotify
+
+  User->>Frontend: Connect Spotify
+  Frontend->>User: Open /api/auth/spotify
+  Backend->>User: Redirect to Spotify
+  User->>Spotify: Authorize
+  Spotify->>Backend: Redirect with code
+  Backend->>Spotify: Exchange code for tokens
+  Backend->>Backend: Store tokens
+  Backend->>User: Redirect to app
+```
+
+### Database schema (ERD)
+
+- **playlists**: id, spotify_id (unique), name, description, owner, image_url, track_count, spotify_url, is_monitoring, last_checked, created_at, updated_at.
+- **tracks**: id, playlist_id (FK), spotify_id, name, artist, album, genre, duration_ms, image_url, spotify_url, added_at, is_new, is_downloaded, updated_at. Unique (playlist_id, spotify_id).
+- **app_settings**: key (PK), value. Stores download_path, monitor_interval_minutes, archive_playlist_name, Spotify tokens, etc.
+
 ---
 
 ## Tech Stack

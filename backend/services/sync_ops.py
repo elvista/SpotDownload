@@ -1,13 +1,13 @@
 """Shared sync operations for playlist refresh/change detection."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 from sqlalchemy.orm import Session
+
 from models import Playlist, Track
 
 
-def refresh_playlist_tracks(
-    playlist: Playlist, spotify_data: dict, db: Session
-) -> dict:
+def refresh_playlist_tracks(playlist: Playlist, spotify_data: dict, db: Session) -> dict:
     """
     Compare Spotify data against stored tracks.
     Adds new tracks, removes deleted ones, returns change summary.
@@ -24,7 +24,7 @@ def refresh_playlist_tracks(
     playlist.owner = spotify_data["owner"]
     playlist.image_url = spotify_data.get("image_url", "")
     playlist.track_count = len(spotify_data["tracks"])
-    playlist.last_checked = datetime.now(timezone.utc)
+    playlist.last_checked = datetime.now(UTC)
 
     # Mark all existing tracks as not new
     for track in playlist.tracks:

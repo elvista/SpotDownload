@@ -9,3 +9,17 @@ sse-starlette
 aiosqlite
 pydantic-settings
 mutagen
+
+# Testing
+pytest
+pytest-asyncio
+httpx
+
+# Resilience
+tenacity
+
+# Migrations
+alembic
+
+# Security
+cryptography

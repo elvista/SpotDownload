@@ -113,7 +113,7 @@ export default React.memo(function SettingsModal({ isOpen, onClose }) {
             </div>
             <h2 className="text-lg font-semibold text-white">Settings</h2>
           </div>
-          <button onClick={onClose} className="text-spotify-light-gray hover:text-white transition-colors p-1">
+          <button onClick={onClose} className="text-spotify-light-gray hover:text-white transition-colors p-1" aria-label="Close">
             <CloseIcon className="w-5 h-5" />
           </button>
         </div>

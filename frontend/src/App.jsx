@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { toast } from 'sonner';
 import Layout from './components/Layout';
 import PlaylistInput from './components/PlaylistInput';
 import TrackList from './components/TrackList';
@@ -9,8 +10,19 @@ import { CloseIcon, MusicIcon } from './components/Icons';
 import { api } from './api/client';
 import { useSSE } from './hooks/useSSE';
 
+/** Map API/network errors to user-friendly messages. */
+function getErrorMessage(err, fallback = 'Something went wrong') {
+  const msg = err?.message || String(err);
+  if (/401|Unauthorized|token|expired/i.test(msg)) return 'Spotify session expired. Reconnect in Settings.';
+  if (/403|Forbidden/i.test(msg)) return 'Access denied. Check Spotify connection in Settings.';
+  if (/404|not found/i.test(msg)) return msg;
+  if (/fetch|network|ECONNREFUSED|Failed to fetch/i.test(msg)) return 'Backend may be offline. Start the server and try again.';
+  return msg || fallback;
+}
+
 export default function App() {
   const [playlists, setPlaylists] = useState([]);
+  const [playlistsLoading, setPlaylistsLoading] = useState(true);
   const [selectedPlaylist, setSelectedPlaylist] = useState(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -32,17 +44,20 @@ export default function App() {
       const data = await api.getPlaylist(id);
       setSelectedPlaylist(data);
       setPlaylists(prev => prev.map(p => p.id === id ? data : p));
-    } catch {
-      // ignore
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Could not load playlist'));
     }
   }, []);
 
   const loadPlaylists = useCallback(async () => {
+    setPlaylistsLoading(true);
     try {
       const data = await api.getPlaylists();
       setPlaylists(data);
-    } catch {
-      // API might not be running yet
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Could not load playlists. Is the backend running?'));
+    } finally {
+      setPlaylistsLoading(false);
     }
   }, []);
 
@@ -70,11 +85,19 @@ export default function App() {
       setPlaylists(prev => [playlist, ...prev]);
       setSelectedPlaylist(playlist);
     } catch (err) {
-      setError(err.message);
+      if (err.existingPlaylist) {
+        await loadPlaylists();
+        setSelectedPlaylist(err.existingPlaylist);
+        toast.success('This playlist is already in your list.');
+      } else {
+        const msg = getErrorMessage(err);
+        setError(msg);
+        toast.error(msg);
+      }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadPlaylists]);
 
   const handleRefresh = useCallback(async () => {
     const id = selectedPlaylistIdRef.current;
@@ -85,7 +108,9 @@ export default function App() {
       setSelectedPlaylist(updated);
       setPlaylists(prev => prev.map(p => p.id === updated.id ? updated : p));
     } catch (err) {
-      setError(err.message);
+      const msg = getErrorMessage(err);
+      setError(msg);
+      toast.error(msg);
     } finally {
       setRefreshing(false);
     }
@@ -96,7 +121,9 @@ export default function App() {
       await api.downloadTracks(trackIds);
       setIsDownloading(true);
     } catch (err) {
-      setError(err.message);
+      const msg = getErrorMessage(err);
+      setError(msg);
+      toast.error(msg);
     }
   }, []);
 
@@ -107,7 +134,9 @@ export default function App() {
       await api.downloadPlaylist(id);
       setIsDownloading(true);
     } catch (err) {
-      setError(err.message);
+      const msg = getErrorMessage(err);
+      setError(msg);
+      toast.error(msg);
     }
   }, []);
 
@@ -121,7 +150,9 @@ export default function App() {
         await api.downloadTracks(newTrackIds);
         setIsDownloading(true);
       } catch (err) {
-        setError(err.message);
+        const msg = getErrorMessage(err);
+        setError(msg);
+        toast.error(msg);
       }
     }
   }, [selectedPlaylist]);
@@ -134,7 +165,9 @@ export default function App() {
       const currentId = selectedPlaylistIdRef.current;
       if (currentId) await fetchPlaylist(currentId);
     } catch (err) {
-      setError(err.message);
+      const msg = getErrorMessage(err);
+      setError(msg);
+      toast.error(msg);
     } finally {
       setChecking(false);
     }
@@ -144,13 +177,29 @@ export default function App() {
     setSelectedPlaylist(playlist);
   }, []);
 
+  const handleGoHome = useCallback(() => {
+    setSelectedPlaylist(null);
+  }, []);
+
+  const handleDeletePlaylist = useCallback(async (id) => {
+    if (!window.confirm('Remove this playlist from monitoring?')) return;
+    try {
+      await api.deletePlaylist(id);
+      setPlaylists(prev => prev.filter(p => p.id !== id));
+      if (selectedPlaylistIdRef.current === id) setSelectedPlaylist(null);
+      toast.success('Playlist removed');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Could not remove playlist'));
+    }
+  }, []);
+
   const handleClearProgress = useCallback(async () => {
     try {
       await api.clearProgress();
       setDownloads([]);
       setIsDownloading(false);
-    } catch {
-      // ignore
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Could not clear progress'));
     }
   }, []);
 
@@ -166,9 +215,25 @@ export default function App() {
   }, [downloads]);
 
   return (
-    <Layout onOpenSettings={handleOpenSettings}>
+    <Layout onOpenSettings={handleOpenSettings} onGoHome={handleGoHome}>
       <SettingsModal isOpen={settingsOpen} onClose={handleCloseSettings} />
 
+      {selectedPlaylist ? (
+        <>
+          <TrackList
+            playlist={selectedPlaylist}
+            onDownload={handleDownload}
+            onDownloadAll={handleDownloadAll}
+            onDownloadNew={handleDownloadNew}
+            onRefresh={handleRefresh}
+            onGoHome={handleGoHome}
+            onRemovePlaylist={handleDeletePlaylist}
+            downloadStatus={downloadStatus}
+            refreshing={refreshing}
+          />
+        </>
+      ) : (
+        <>
       <PlaylistInput onSubmit={handleAddPlaylist} loading={loading} />
 
       {error && (
@@ -183,22 +248,14 @@ export default function App() {
       <PlaylistMonitor
         playlists={playlists}
         onSelect={handleSelectPlaylist}
+        onDeletePlaylist={handleDeletePlaylist}
         onCheckAll={handleCheckAll}
         selectedId={selectedPlaylist?.id}
         checking={checking}
+        loading={playlistsLoading}
       />
 
-      <TrackList
-        playlist={selectedPlaylist}
-        onDownload={handleDownload}
-        onDownloadAll={handleDownloadAll}
-        onDownloadNew={handleDownloadNew}
-        onRefresh={handleRefresh}
-        downloadStatus={downloadStatus}
-        refreshing={refreshing}
-      />
-
-      {!selectedPlaylist && playlists.length === 0 && (
+      {playlists.length === 0 && (
         <div className="mt-16 text-center animate-fade-in">
           <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-spotify-mid-gray flex items-center justify-center">
             <MusicIcon className="w-10 h-10 text-spotify-light-gray" />
@@ -208,6 +265,8 @@ export default function App() {
             Paste a Spotify playlist URL above to start monitoring and downloading your favorite music.
           </p>
         </div>
+      )}
+        </>
       )}
 
       <DownloadProgress downloads={downloads} onClear={handleClearProgress} />

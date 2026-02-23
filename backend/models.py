@@ -1,6 +1,8 @@
-from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text
+from datetime import UTC, datetime
+
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
+
 from database import Base
 
 
@@ -16,8 +18,9 @@ class Playlist(Base):
     track_count = Column(Integer, default=0)
     spotify_url = Column(String, default="")
     is_monitoring = Column(Boolean, default=True)
-    last_checked = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_checked = Column(DateTime, default=lambda: datetime.now(UTC))
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
     tracks = relationship("Track", back_populates="playlist", cascade="all, delete-orphan")
 
@@ -35,9 +38,10 @@ class Track(Base):
     duration_ms = Column(Integer, default=0)
     image_url = Column(String, default="")
     spotify_url = Column(String, default="")
-    added_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    added_at = Column(DateTime, default=lambda: datetime.now(UTC))
     is_new = Column(Boolean, default=False)
     is_downloaded = Column(Boolean, default=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
     playlist = relationship("Playlist", back_populates="tracks")
 
