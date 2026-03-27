@@ -1,10 +1,26 @@
 # CrateDigger
+
+**Your personal vinyl shop for the digital age.**
+
 Vibecoded by Elius (https://hmelius.com)
 
-Self-hosted web app with two areas in one React shell:
+---
 
-- **Spotify ID** — Monitor Spotify playlists, detect new tracks, download audio via **yt-dlp** (YouTube search) with Spotify metadata (MP3 + ID3).
-- **Mixtape ID** — Upload a mix or paste a YouTube / SoundCloud / Mixcloud URL; sample and fingerprint segment (**ACRCloud** / **AudD**) to build a timestamped track list. Optionally download found tracks through the same yt-dlp pipeline or export to Spotify.
+You know that feeling — you're three hours deep in a DJ set on YouTube, you hear a track that stops you mid-scroll, and you *need* it. Or you've got a Spotify playlist that's become your lifeline and you want those files on your drive, tagged properly, no questions asked. Or maybe someone sends you a two-hour mixtape and you want to know every single track in it, timestamped, ready to save.
+
+**CrateDigger** is a self-hosted web app for music obsessives who want to own their listening, not just stream it. Two tools, one app:
+
+### Spotify ID — Your playlist, your files
+
+Point it at any Spotify playlist. CrateDigger monitors it for new additions, downloads audio via **yt-dlp**, and writes clean **ID3 tags from Spotify** — artist, title, album art, the works. Set it and forget it: new tracks get pulled automatically on a schedule. It's your music library on autopilot.
+
+### Mixtape ID — Crack open any mix
+
+Paste a YouTube, SoundCloud, or Mixcloud URL (or upload a file directly). CrateDigger chops the mix into segments, fingerprints each one through **ACRCloud** and **AudD**, and hands you a **timestamped tracklist**. From there, download individual tracks or **export the whole list straight to a Spotify playlist** with one click.
+
+---
+
+No cloud accounts, no subscriptions, no data leaving your machine. Everything runs locally: **FastAPI + SQLite + React**.
 
 **Stack:** FastAPI + SQLite on **:8000**, Vite on **:5173**, single repo-root **`.env`**.
 
