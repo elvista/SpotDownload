@@ -1,77 +1,87 @@
-# SpotDownload
+# Music Studio
+Vibecoded by Elius (https://hmelius.com)
 
-Monitor Spotify playlists for changes and download new songs automatically.
+Self-hosted web app with two areas in one React shell:
 
-## Features
+- **Spotify ID** — Monitor Spotify playlists, detect new tracks, download audio via **yt-dlp** (YouTube search) with Spotify metadata (MP3 + ID3).
+- **Mixtape ID** — Upload a mix or paste a YouTube / SoundCloud / Mixcloud URL; sample and fingerprint segment (**ACRCloud** / **AudD**) to build a timestamped track list. Optionally download found tracks through the same yt-dlp pipeline or export to Spotify.
 
-- Paste any Spotify playlist URL to track it
-- Detect new songs added to monitored playlists
-- Download songs to your computer via spotdl
-- Real-time download progress
-- Background monitoring with configurable intervals
+**Stack:** FastAPI + SQLite on **:8000**, Vite on **:5173**, single repo-root **`.env`**.
 
-## Setup
+## Quick start (recommended)
 
-### 1. Spotify API Credentials
-
-1. Go to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard)
-2. Create a new app
-3. Copy the **Client ID** and **Client Secret**
-4. In your app settings, click **Edit Settings**, then under **Redirect URIs** add:
-   `http://localhost:8000/api/auth/spotify/callback` and click **Add**, then **Save**.
-5. Create a `.env` file in the project root (copy from `.env.example`):
+From the **repository root** (where `package.json` lives):
 
 ```bash
 cp .env.example .env
-```
+# Edit .env: Spotify credentials; for Mixtape ID add ACRCloud (and optionally AudD). See .env.example.
 
-Then fill in your credentials (including `SPOTIFY_REDIRECT_URI=http://localhost:8000/api/auth/spotify/callback` if not already present).
-
-### 2. Backend
-
-```bash
-cd backend
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app --reload
-```
-
-Backend runs at http://localhost:8000
-
-### 3. Frontend
-
-```bash
-cd frontend
 npm install
 npm run dev
 ```
 
-Frontend runs at http://localhost:5173
+This runs **uvicorn** (`:8000`) and **Vite** (`:5173`) together. Open **http://localhost:5173**. The dev server proxies **`/api`** to FastAPI.
 
-## How to Use
+API docs: **http://localhost:8000/docs**
 
-1. **Add a playlist** — Paste a Spotify playlist URL (e.g. `https://open.spotify.com/playlist/...`) into the input and click **Add Playlist**. The app fetches the track list and stores it locally.
-2. **Monitor** — Playlists are checked in the background at the interval set in Settings. New tracks are marked as "New" in the UI.
-3. **Download** — Click **Download All**, **Download New**, or the download icon on a track. Files are saved as MP3 with ID3 tags (title, artist, album, genre, cover art) from Spotify.
-4. **Archive** — After downloads finish, the app can move successful tracks into a Spotify archive playlist and empty the source playlist. Connect your Spotify account in Settings and set the **Archive Playlist Name** to enable this.
+### Alternative: run backend and frontend separately
 
-**Settings** (gear icon): set download folder, monitor interval, archive playlist name, theme (dark/light/system), and connect Spotify for archive/empty features.
+```bash
+cd backend && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
 
-API documentation is available at **http://localhost:8000/docs** when the backend is running.
+```bash
+cd frontend && npm install && npm run dev
+```
+
+## Environment (repo-root `.env`)
+
+- **Spotify** — `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, `SPOTIFY_REDIRECT_URI` (default **`http://127.0.0.1:8000/api/auth/spotify/callback`** — not `localhost`; [Spotify requires loopback as an IP](https://developer.spotify.com/documentation/web-api/tutorials/migration-insecure-redirect-uri)). Register that exact URI in the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard). Spotify ID login uses **Authorization Code + PKCE** (required by current Spotify rules). Optional: `FRONTEND_ORIGIN` if the post-login redirect should not be `http://localhost:5173`.
+- **Mixtape → Spotify playlists** — If you already connect Spotify under **Settings** on Spotify ID, no second login is needed. Register a **second redirect URI** only if you use the optional Mixtape-only login: `http://127.0.0.1:8000/api/mixtape/spotify/callback` (see `SPOTIFY_REDIRECT_URI_MIXID` in `.env.example`).
+- **Mixtape fingerprinting** — `ACRCLOUD_HOST`, `ACRCLOUD_ACCESS_KEY`, `ACRCLOUD_ACCESS_SECRET`; optional `AUDD_API_TOKEN`.
+- **Optional** — `DOWNLOAD_PATH`, `MONITOR_INTERVAL_MINUTES`, `DOWNLOAD_CONCURRENCY` (1–8, default 3; parallel downloads), `ENCRYPTION_KEY`.
+
+## Features (Spotify ID)
+
+- Paste a playlist URL, monitor on an interval, download new or all tracks.
+- Real-time download progress (SSE).
+- Optional archive / empty workflow after download (Spotify user connection in Settings).
+
+### Known limitation: YouTube match vs Spotify track
+
+Downloads use **yt-dlp** with **YouTube search** (`artist - title`), then **ID3 tags are taken from Spotify**. The audio file is whatever that search returns first — it may be a cover, live cut, wrong upload, or a bad match, especially for **indie or niche** tracks where YouTube metadata is messy.
+
+There is **no automatic verification** that the downloaded audio is the same recording as on Spotify. Doing that reliably (fingerprinting, duration heuristics, multi-result ranking, etc.) is **non-trivial and still error-prone** for small-catalog music, so this is a **documented, intentional non-goal** for this project — not something we plan to “fix” with a quick feature.
+
+**What you can do:** use the download progress UI: it shows the **YouTube title** and a **link to the source video** so you can sanity-check before trusting the file.
+
+## Features (Mixtape ID)
+
+- Fingerprint status check: **`GET http://localhost:8000/api/mixtape/fingerprint-status`** — confirms whether ACRCloud/AudD env is detected (no secrets returned).
+- **Export to Spotify playlist** uses the same user session as **Spotify ID → Settings** (one connect). Optional Mixtape-only OAuth exists if you never open Settings.
+
+## Requirements
+
+- **Python 3.11+**
+- **Node.js 18+**
+- **yt-dlp** and **ffmpeg** on `PATH` (downloads and Mixtape audio processing). Example: `brew install yt-dlp ffmpeg` (macOS).
 
 ## Troubleshooting
 
 | Issue | What to do |
 |-------|------------|
-| **Request failed / Connection refused** | Start the backend: `cd backend && source venv/bin/activate && uvicorn main:app --reload` |
-| **Spotify: "Invalid redirect URI" or 400** | In the [Spotify Dashboard](https://developer.spotify.com/dashboard) → Your app → Edit Settings → Redirect URIs, add exactly: `http://localhost:8000/api/auth/spotify/callback` (no trailing slash). Copy the value from Settings in the app. |
-| **Downloads fail or no audio** | Install **yt-dlp** and **ffmpeg**: `pip install yt-dlp` and `brew install ffmpeg` (macOS). Ensure the download path in Settings is writable. |
-| **Genre missing on tracks** | Re-sync the playlist: open the playlist and click **Check for Changes**, or remove and re-add the playlist. |
-| **Database schema changes** | Run migrations: `cd backend && alembic upgrade head`. For a fresh install, the first run creates tables automatically. |
+| **Connection refused / API errors in the UI** | Run the backend on :8000 (`npm run dev` from root, or `uvicorn` from `backend/`). |
+| **Spotify: HTTP 400, invalid redirect, or Dashboard “not secure”** | Use **`http://127.0.0.1:8000/api/auth/spotify/callback`** — the IP is **127.0.0.1** (four parts: 127, 0, 0, 1). A common mistake is **127.0.01** (wrong). Not `localhost`. Match Dashboard and **`SPOTIFY_REDIRECT_URI`** in `.env`, then restart the API. |
+| **Downloads fail** | Install **yt-dlp** and **ffmpeg**; ensure the download folder in Settings exists and is writable. |
+| **Mixtape finds no tracks** | Call **`/api/mixtape/fingerprint-status`**. Ensure ACRCloud (and optionally AudD) keys in repo-root `.env`, then restart the API. |
+| **DB migrations** | `cd backend && alembic upgrade head` |
 
-## Requirements
+## Docs
 
-- Python 3.11+
-- Node.js 18+
-- yt-dlp and ffmpeg for downloads: `pip install yt-dlp` and `brew install ffmpeg` (macOS)
+- **[CLAUDE.md](CLAUDE.md)** — developer/agent overview (architecture, commands).
+- **[Documentation.md](Documentation.md)** — short product notes; detailed setup is above.
+
+## License / usage
+
+Playlist and track metadata come from Spotify. Audio is matched via YouTube search. Mixtape ID uses third-party fingerprinting APIs. Use complies with Spotify, YouTube, and those providers’ terms; respect copyright.

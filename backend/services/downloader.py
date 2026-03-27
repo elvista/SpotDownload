@@ -1,4 +1,10 @@
-"""Download audio via yt-dlp and apply Spotify metadata (ID3 tags, cover art)."""
+"""Download audio via yt-dlp and apply Spotify metadata (ID3 tags, cover art).
+
+YouTube search returns the first hit; audio may not match the Spotify track (covers, wrong
+uploads, indie/niche ambiguity). The project documents this as a known limitation and does
+not implement automatic verification — see README. Download progress includes source_url /
+source_title for manual checks.
+"""
 
 import asyncio
 import logging

@@ -22,7 +22,8 @@ describe('SettingsModal', () => {
     });
     vi.mocked(api.getAuthStatus).mockResolvedValue({
       connected: false,
-      redirect_uri: 'http://localhost:8000/api/auth/spotify/callback',
+      redirect_uri: 'http://127.0.0.1:8000/api/auth/spotify/callback',
+      redirect_uri_warnings: [],
     });
     vi.clearAllMocks();
   });

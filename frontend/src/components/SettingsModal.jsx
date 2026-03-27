@@ -8,6 +8,7 @@ export default React.memo(function SettingsModal({ isOpen, onClose }) {
   const [archivePlaylistName, setArchivePlaylistName] = useState('DJ Archive');
   const [spotifyConnected, setSpotifyConnected] = useState(false);
   const [spotifyRedirectUri, setSpotifyRedirectUri] = useState('');
+  const [spotifyRedirectWarnings, setSpotifyRedirectWarnings] = useState([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState(null);
@@ -25,6 +26,7 @@ export default React.memo(function SettingsModal({ isOpen, onClose }) {
       setArchivePlaylistName(settings.archive_playlist_name);
       setSpotifyConnected(authStatus.connected);
       setSpotifyRedirectUri(authStatus.redirect_uri || '');
+      setSpotifyRedirectWarnings(authStatus.redirect_uri_warnings || []);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -69,7 +71,7 @@ export default React.memo(function SettingsModal({ isOpen, onClose }) {
   }, [downloadPath]);
 
   const handleConnectSpotify = useCallback(() => {
-    window.open('http://localhost:8000/api/auth/spotify', '_blank');
+    window.open(`${window.location.origin}/api/auth/spotify`, '_blank', 'noopener,noreferrer');
   }, []);
 
   const handleDisconnectSpotify = useCallback(async () => {
@@ -82,7 +84,7 @@ export default React.memo(function SettingsModal({ isOpen, onClose }) {
   }, []);
 
   useEffect(() => {
-    const handleAuthMessage = (e) => {
+    const handleAuthMessage = () => {
       const params = new URLSearchParams(window.location.search);
       const authStatus = params.get('auth');
       if (authStatus === 'success') {
@@ -137,7 +139,13 @@ export default React.memo(function SettingsModal({ isOpen, onClose }) {
               <div className="mb-3 p-2.5 bg-spotify-mid-gray/50 border border-white/10 rounded-lg">
                 <p className="text-xs text-spotify-light-gray mb-1">Add this exact Redirect URI in your Spotify app settings:</p>
                 <code className="text-xs text-spotify-green break-all select-all block font-mono">{spotifyRedirectUri}</code>
-                <p className="text-xs text-spotify-light-gray mt-1.5">Dashboard → Your app → Edit Settings → Redirect URIs → Add → Save</p>
+                {spotifyRedirectWarnings.length > 0 && (
+                  <ul className="mt-2 space-y-1 text-xs text-amber-200 list-disc list-inside border border-amber-500/40 rounded-lg p-2 bg-amber-950/30">
+                    {spotifyRedirectWarnings.map((w) => (
+                      <li key={w.slice(0, 80)}>{w}</li>
+                    ))}
+                  </ul>
+                )}
               </div>
             )}
             {spotifyConnected ? (

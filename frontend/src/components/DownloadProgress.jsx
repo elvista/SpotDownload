@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { SpinnerIcon, CheckIcon, ErrorIcon } from './Icons';
 
-export default React.memo(function DownloadProgress({ downloads, onClear }) {
+export default React.memo(function DownloadProgress({ downloads, onClear, className = '' }) {
   const list = downloads ?? [];
   const { active, completed, failed } = useMemo(() => ({
     active: list.filter(d => d.status === 'downloading'),
@@ -12,7 +12,9 @@ export default React.memo(function DownloadProgress({ downloads, onClear }) {
   if (!downloads || downloads.length === 0) return null;
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-40 bg-spotify-dark-gray border-t border-white/10 shadow-2xl animate-fade-in">
+    <div
+      className={`fixed bottom-0 left-0 right-0 z-40 bg-spotify-dark-gray border-t border-white/10 shadow-2xl animate-fade-in ${className}`}
+    >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-4">

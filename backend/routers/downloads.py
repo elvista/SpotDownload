@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import time
 from collections import deque
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,13 +28,15 @@ MAX_PROGRESS_ENTRIES = 200
 download_progress: dict[str, dict] = {}
 _progress_order: deque[str] = deque(maxlen=MAX_PROGRESS_ENTRIES)
 
-# Max concurrent downloads
-CONCURRENT_DOWNLOADS = 3
+class MixtapeTrackIn(BaseModel):
+    name: str
+    artist: str
 
 
 class DownloadRequest(BaseModel):
     track_ids: list[int] = []
     playlist_id: int | None = None
+    mixtape_tracks: list[MixtapeTrackIn] | None = None
 
 
 def _resolve_download_path() -> str:
@@ -50,40 +53,83 @@ def _resolve_download_path() -> str:
 
 @router.post("/downloads")
 async def start_download(body: DownloadRequest, db: Session = Depends(get_db)):
-    if body.playlist_id:
+    if body.mixtape_tracks:
+        track_data = []
+        neg_id = -1
+        for mt in body.mixtape_tracks:
+            name = (mt.name or "").strip()
+            artist = (mt.artist or "").strip()
+            if not name or not artist:
+                continue
+            track_data.append(
+                {
+                    "id": neg_id,
+                    "spotify_id": "",
+                    "spotify_url": "",
+                    "name": name,
+                    "artist": artist,
+                    "album": "",
+                    "image_url": "",
+                    "genre": "",
+                }
+            )
+            neg_id -= 1
+        if not track_data:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide track_ids, playlist_id, or mixtape_tracks with name+artist",
+            )
+        track_ids = [t["id"] for t in track_data]
+        source_playlist_id = None
+        source_playlist_spotify_id = None
+    elif body.playlist_id:
         tracks = db.query(Track).filter(Track.playlist_id == body.playlist_id).all()
-    elif body.track_ids:
-        tracks = db.query(Track).filter(Track.id.in_(body.track_ids)).all()
-    else:
-        raise HTTPException(status_code=400, detail="Provide track_ids or playlist_id")
-
-    if not tracks:
-        raise HTTPException(status_code=404, detail="No tracks found")
-
-    # Extract plain data before request ends (don't pass ORM objects to background)
-    track_data = [
-        {
-            "id": t.id,
-            "spotify_id": t.spotify_id,
-            "spotify_url": t.spotify_url,
-            "name": t.name,
-            "artist": t.artist,
-            "album": t.album or "",
-            "image_url": t.image_url or "",
-            "genre": getattr(t, "genre", "") or "",
-        }
-        for t in tracks
-    ]
-    track_ids = [t.id for t in tracks]
-
-    # Get source playlist info if this is a playlist download
-    source_playlist_id = None
-    source_playlist_spotify_id = None
-    if body.playlist_id:
+        if not tracks:
+            raise HTTPException(status_code=404, detail="No tracks found")
+        track_data = [
+            {
+                "id": t.id,
+                "spotify_id": t.spotify_id,
+                "spotify_url": t.spotify_url,
+                "name": t.name,
+                "artist": t.artist,
+                "album": t.album or "",
+                "image_url": t.image_url or "",
+                "genre": getattr(t, "genre", "") or "",
+            }
+            for t in tracks
+        ]
+        track_ids = [t["id"] for t in track_data]
+        source_playlist_id = None
+        source_playlist_spotify_id = None
         playlist = db.query(Playlist).filter(Playlist.id == body.playlist_id).first()
         if playlist:
             source_playlist_id = playlist.id
             source_playlist_spotify_id = playlist.spotify_id
+    elif body.track_ids:
+        tracks = db.query(Track).filter(Track.id.in_(body.track_ids)).all()
+        if not tracks:
+            raise HTTPException(status_code=404, detail="No tracks found")
+        track_data = [
+            {
+                "id": t.id,
+                "spotify_id": t.spotify_id,
+                "spotify_url": t.spotify_url,
+                "name": t.name,
+                "artist": t.artist,
+                "album": t.album or "",
+                "image_url": t.image_url or "",
+                "genre": getattr(t, "genre", "") or "",
+            }
+            for t in tracks
+        ]
+        track_ids = [t["id"] for t in track_data]
+        source_playlist_id = None
+        source_playlist_spotify_id = None
+    else:
+        raise HTTPException(
+            status_code=400, detail="Provide track_ids, playlist_id, or mixtape_tracks"
+        )
 
     # Resolve download path once for the entire batch
     download_path = _resolve_download_path()
@@ -95,7 +141,7 @@ async def start_download(body: DownloadRequest, db: Session = Depends(get_db)):
         )
     )
 
-    return {"detail": f"Started downloading {len(tracks)} tracks", "count": len(tracks)}
+    return {"detail": f"Started downloading {len(track_data)} tracks", "count": len(track_data)}
 
 
 def _get_setting_from_db(key: str, default: str = "") -> str:
@@ -152,7 +198,9 @@ async def _post_download_workflow(
 
                 def _set_setting(key: str, value: str):
                     if key in TOKEN_KEYS and value:
-                        value = encrypt_token(value, getattr(app_settings, "ENCRYPTION_KEY", None) or "")
+                        value = encrypt_token(
+                            value, getattr(app_settings, "ENCRYPTION_KEY", None) or ""
+                        )
                     row = db.query(AppSetting).filter(AppSetting.key == key).first()
                     if row:
                         row.value = value
@@ -260,17 +308,18 @@ async def _run_downloads(
     source_playlist_spotify_id: str | None = None,
 ):
     """Run concurrent downloads with own DB session."""
-    sem = asyncio.Semaphore(CONCURRENT_DOWNLOADS)
+    sem = asyncio.Semaphore(app_settings.DOWNLOAD_CONCURRENCY)
 
     # Run all downloads concurrently
     results = await asyncio.gather(*[_download_one(t, download_path, sem) for t in track_data])
 
-    # Update DB with successful downloads using a fresh session
+    # Update DB with successful downloads using a fresh session (real Track rows only)
     successful_ids = [r for r in results if r is not None]
-    if successful_ids:
+    db_ids = [i for i in successful_ids if i > 0]
+    if db_ids:
         db = SessionLocal()
         try:
-            db.query(Track).filter(Track.id.in_(successful_ids)).update(
+            db.query(Track).filter(Track.id.in_(db_ids)).update(
                 {Track.is_downloaded: True}, synchronize_session="fetch"
             )
             db.commit()
@@ -290,14 +339,28 @@ async def _run_downloads(
 
 @router.get("/downloads/progress")
 async def download_progress_stream():
+    heartbeat_sec = 15.0
+    idle_empty_sleep = 2.0
+    idle_busy_sleep = 0.5
+
     async def event_generator():
+        last_payload: str | None = None
+        last_send = 0.0
         while True:
             if download_progress:
-                yield {
-                    "event": "progress",
-                    "data": json.dumps(list(download_progress.values())),
-                }
-            await asyncio.sleep(1)
+                payload = json.dumps(list(download_progress.values()))
+                now = time.monotonic()
+                if payload != last_payload or (now - last_send) >= heartbeat_sec:
+                    last_payload = payload
+                    last_send = now
+                    yield {
+                        "event": "progress",
+                        "data": payload,
+                    }
+                await asyncio.sleep(idle_busy_sleep)
+            else:
+                last_payload = None
+                await asyncio.sleep(idle_empty_sleep)
 
     return EventSourceResponse(event_generator())
 

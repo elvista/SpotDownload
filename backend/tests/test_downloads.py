@@ -2,10 +2,11 @@
 
 
 def test_start_download_no_body(client):
-    """POST /api/downloads with neither track_ids nor playlist_id returns 400."""
+    """POST /api/downloads with no selection returns 400."""
     r = client.post("/api/downloads", json={})
     assert r.status_code == 400
-    assert "track_ids" in r.json()["detail"].lower() or "playlist_id" in r.json()["detail"].lower()
+    detail = r.json()["detail"].lower()
+    assert "track_ids" in detail or "playlist_id" in detail or "mixtape_tracks" in detail
 
 
 def test_start_download_empty_track_ids(client):

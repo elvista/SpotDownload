@@ -21,7 +21,7 @@ export default React.memo(function PlaylistMonitor({ playlists, onSelect, onDele
   return (
     <div className="animate-fade-in mt-8">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-white">Monitored Playlists</h2>
+        <h2 className="text-lg font-semibold text-white">Monitored Spotify playlists</h2>
         <button
           onClick={onCheckAll}
           disabled={checking || loading}

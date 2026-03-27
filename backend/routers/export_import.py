@@ -51,10 +51,7 @@ class ImportPayload(BaseModel):
 def export_data(db: Session = Depends(get_db)) -> dict:
     """Export all playlists and their tracks as JSON."""
     playlists = (
-        db.query(Playlist)
-        .options(selectinload(Playlist.tracks))
-        .order_by(Playlist.id)
-        .all()
+        db.query(Playlist).options(selectinload(Playlist.tracks)).order_by(Playlist.id).all()
     )
     out = []
     for pl in playlists:

@@ -20,7 +20,7 @@ async function request(path, options = {}) {
 }
 
 export const api = {
-  // Playlists
+  // Spotify playlists (Spotify ID)
   addPlaylist: (url) => request('/playlists', {
     method: 'POST',
     body: JSON.stringify({ url }),

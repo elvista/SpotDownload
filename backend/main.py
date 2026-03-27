@@ -1,5 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, HTTPException, Request
@@ -8,7 +9,7 @@ from fastapi.responses import JSONResponse
 
 from config import settings as app_config
 from database import SessionLocal, init_db
-from routers import auth, downloads, export_import, monitor, playlists
+from routers import auth, downloads, export_import, mixtape, monitor, playlists
 from routers import settings as settings_router
 from services.monitor import MonitorService
 
@@ -27,6 +28,7 @@ def _exception_handler(request: Request, exc: Exception) -> JSONResponse:
         status_code=500,
         content={"detail": "Internal server error. Check logs for details."},
     )
+
 
 scheduler = BackgroundScheduler()
 monitor_service = MonitorService()
@@ -49,6 +51,11 @@ def scheduled_check():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from services.fingerprinter import fingerprinter
+
+    _root = Path(__file__).resolve().parent
+    for sub in ("uploads", "temp", "cache"):
+        (_root / sub).mkdir(parents=True, exist_ok=True)
     init_db()
     scheduler.add_job(
         scheduled_check,
@@ -61,6 +68,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Background monitor started (every {app_config.MONITOR_INTERVAL_MINUTES} min)")
     yield
     scheduler.shutdown()
+    await fingerprinter.aclose()
 
 
 app = FastAPI(title="SpotDownload", version="1.0.0", lifespan=lifespan)
@@ -81,6 +89,7 @@ app.include_router(monitor.router, prefix="/api")
 app.include_router(settings_router.router, prefix="/api")
 app.include_router(export_import.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
+app.include_router(mixtape.router, prefix="/api")
 
 
 @app.get("/api/health")

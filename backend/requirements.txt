@@ -1,9 +1,9 @@
 fastapi
+python-multipart
 uvicorn[standard]
 sqlalchemy
 spotipy
 python-dotenv
-spotdl
 apscheduler
 sse-starlette
 aiosqlite

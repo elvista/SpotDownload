@@ -33,6 +33,11 @@ build/
 *.sqlite
 *.sqlite3
 
+# Backend runtime (Mixtape uploads, temp chunks, fingerprint cache)
+backend/cache/
+backend/uploads/
+backend/temp/
+
 # Logs
 *.log
 npm-debug.log*

@@ -19,7 +19,7 @@ export default React.memo(function PlaylistInput({ onSubmit, loading }) {
   return (
     <div className="animate-fade-in">
       <div className="mb-2">
-        <h2 className="text-lg font-semibold text-white">Add Playlist</h2>
+        <h2 className="text-lg font-semibold text-white">Add Spotify playlist</h2>
         <p className="text-sm text-spotify-light-gray mt-1">
           Paste a Spotify playlist URL to start tracking and downloading songs
         </p>

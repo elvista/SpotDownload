@@ -20,7 +20,9 @@ class Playlist(Base):
     is_monitoring = Column(Boolean, default=True)
     last_checked = Column(DateTime, default=lambda: datetime.now(UTC))
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
-    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+    updated_at = Column(
+        DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
+    )
 
     tracks = relationship("Track", back_populates="playlist", cascade="all, delete-orphan")
 
@@ -41,7 +43,9 @@ class Track(Base):
     added_at = Column(DateTime, default=lambda: datetime.now(UTC))
     is_new = Column(Boolean, default=False)
     is_downloaded = Column(Boolean, default=False)
-    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+    updated_at = Column(
+        DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
+    )
 
     playlist = relationship("Playlist", back_populates="tracks")
 
