@@ -19,6 +19,7 @@ logger = logging.getLogger("cratedigger.spotify")
 # ---------------------------------------------------------------------------
 
 _MATCH_THRESHOLD = 0.3
+_rate_limited_until = 0.0  # timestamp when rate limit expires
 
 # Patterns to strip from titles — DJ-specific suffixes that hurt Spotify search
 _TITLE_NOISE = re.compile(
@@ -93,16 +94,25 @@ async def _spotify_search_best(
 ) -> dict[str, str] | None:
     """Search Spotify, fetch 5 candidates, return the best-scored match or None."""
     import asyncio as _aio
+    import time as _time
 
-    for attempt in range(3):
+    global _rate_limited_until
+    if _time.time() < _rate_limited_until:
+        return None
+
+    for attempt in range(2):
         r = await client.get(
             "https://api.spotify.com/v1/search",
             params={"q": query, "type": "track", "limit": 5},
             headers={"Authorization": f"Bearer {token}"},
         )
         if r.status_code == 429:
-            wait = min(int(r.headers.get("retry-after", "2")), 10)
-            await _aio.sleep(wait)
+            wait = int(r.headers.get("retry-after", "2"))
+            if wait > 30:
+                _rate_limited_until = _time.time() + wait
+                logger.warning("Spotify rate limited for %ds — search disabled until reset", wait)
+                return None
+            await _aio.sleep(min(wait, 5))
             continue
         break
     if r.status_code != 200:
@@ -356,7 +366,11 @@ async def import_playlist_to_spotify(
             })
 
     if not matched_uris:
-        await send_event({"type": "error", "error": "No tracks could be matched on Spotify."})
+        import time as _t
+        if _t.time() < _rate_limited_until:
+            await send_event({"type": "error", "error": "Spotify API rate limit active. Please try again later."})
+        else:
+            await send_event({"type": "error", "error": "No tracks could be matched on Spotify."})
         return {"matched": 0, "notMatched": total, "added": 0}
 
     await send_event({"type": "creating_playlist", "name": playlist_name, "mode": "create"})
