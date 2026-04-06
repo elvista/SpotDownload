@@ -210,6 +210,9 @@ def extract_spotify_track_id(url: str | None) -> str | None:
 
 
 async def resolve_spotify_track_ids_from_tracks(tracks: list[dict[str, Any]]) -> list[str]:
+    from services.spotify_service import search_spotify_track
+
+    token = await fingerprinter.get_spotify_token()
     ordered: list[str] = []
     seen: set[str] = set()
     for t in tracks:
@@ -225,9 +228,14 @@ async def resolve_spotify_track_ids_from_tracks(tracks: list[dict[str, Any]]) ->
             continue
         link_raw = t.get("spotifyLink") or t.get("spotify_link")
         tid = extract_spotify_track_id(link_raw)
-        if not tid:
-            link = await fingerprinter.get_spotify_link(artist, title)
-            tid = extract_spotify_track_id(link)
+        if not tid and token:
+            result = await search_spotify_track(artist, title, token)
+            if result:
+                tid = extract_spotify_track_id(result.get("spotifyUrl"))
+                if not tid:
+                    uri = result.get("uri", "")
+                    if uri.startswith("spotify:track:"):
+                        tid = uri.split(":")[-1]
         if tid and tid not in seen:
             seen.add(tid)
             ordered.append(tid)
@@ -600,41 +608,22 @@ async def create_spotify_playlist(body: CreatePlaylistBody):
             },
         )
 
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    from services.spotify_service import create_or_update_spotify_playlist
+
     desc = f"Created by Mixtape ID ({body.filter} filter) — {datetime.now().strftime('%Y-%m-%d')}"
+    uris = [f"spotify:track:{tid}" for tid in track_ids]
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            cr = await client.post(
-                "https://api.spotify.com/v1/me/playlists",
-                json={
-                    "name": body.playlist_name,
-                    "description": desc,
-                    "public": False,
-                },
-                headers=headers,
-            )
-            if cr.status_code not in (200, 201):
-                raise HTTPException(status_code=500, detail=cr.text)
-            pdata = cr.json()
-            playlist_id = pdata["id"]
-            playlist_url = (pdata.get("external_urls") or {}).get("spotify", "")
-            uris = [f"spotify:track:{tid}" for tid in track_ids]
-            added = 0
-            for i in range(0, len(uris), 100):
-                chunk = uris[i : i + 100]
-                ar = await client.post(
-                    f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks",
-                    json={"uris": chunk},
-                    headers=headers,
-                )
-                if ar.status_code not in (200, 201):
-                    raise HTTPException(status_code=500, detail=ar.text)
-                added += len(chunk)
+        result = await create_or_update_spotify_playlist(
+            body.playlist_name, uris, token,
+            description=desc, update_existing=True,
+        )
+        if result.get("error"):
+            raise HTTPException(status_code=500, detail=result["error"])
         return {
             "success": True,
-            "playlistId": playlist_id,
-            "playlistUrl": playlist_url,
-            "addedTracks": added,
+            "playlistId": result["playlistId"],
+            "playlistUrl": result["playlistUrl"],
+            "addedTracks": result["added"],
         }
     except HTTPException:
         raise

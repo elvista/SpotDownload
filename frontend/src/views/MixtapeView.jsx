@@ -846,9 +846,10 @@ export default function MixtapeView() {
             <button
               type="button"
               onClick={exportToSpotify}
-              className="px-4 py-2 rounded-lg bg-spotify-green text-black text-sm font-semibold hover:brightness-110"
+              className="px-4 py-2 rounded-lg bg-spotify-green text-black text-sm font-semibold hover:brightness-110 flex items-center gap-2"
             >
-              Spotify playlist
+              <SpotifyIcon className="w-4 h-4" />
+              Import to Spotify
             </button>
             <button
               type="button"

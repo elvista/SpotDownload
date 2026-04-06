@@ -6,6 +6,7 @@ import { useHeaderContext } from './context/HeaderContext';
 
 const SpotDownloadView = lazy(() => import('./views/SpotDownloadView'));
 const MixtapeView = lazy(() => import('./views/MixtapeView'));
+const LexiconView = lazy(() => import('./views/LexiconView'));
 
 function RouteFallback() {
   return (
@@ -19,18 +20,14 @@ function AppShell() {
   const { onGoHome } = useHeaderContext();
   const location = useLocation();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const showSettings = location.pathname !== '/mixtape';
-
   return (
     <Layout
       onOpenSettings={() => setSettingsOpen(true)}
       onGoHome={onGoHome}
-      showSettings={showSettings}
+      showSettings
     >
       <Outlet />
-      {showSettings && (
-        <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
-      )}
+      <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </Layout>
   );
 }
@@ -52,6 +49,14 @@ export default function App() {
           element={
             <Suspense fallback={<RouteFallback />}>
               <MixtapeView />
+            </Suspense>
+          }
+        />
+        <Route
+          path="lexicon"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <LexiconView />
             </Suspense>
           }
         />

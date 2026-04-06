@@ -69,4 +69,23 @@ export const api = {
   getAuthStatus: () => request('/auth/spotify/status'),
   
   disconnectSpotify: () => request('/auth/spotify', { method: 'DELETE' }),
+
+  // Lexicon
+  getLexiconDbStatus: () => request('/lexicon/db-status'),
+
+  setLexiconDbPath: (path) => request('/lexicon/db-path', {
+    method: 'PUT',
+    body: JSON.stringify({ path }),
+  }),
+
+  getLexiconPlaylists: () => request('/lexicon/playlists'),
+
+  getLexiconPlaylistTracks: (id) => request(`/lexicon/playlists/${id}/tracks`),
+
+  getLexiconSpotifyStatus: () => request('/lexicon/spotify-status'),
+
+  importLexiconToSpotify: (playlistId, playlistName) => request('/lexicon/import-to-spotify', {
+    method: 'POST',
+    body: JSON.stringify({ playlistId, playlistName }),
+  }),
 };

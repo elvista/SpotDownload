@@ -524,6 +524,33 @@ class Fingerprinter:
                 pass
         return None
 
+    def _get_db_access_token(self) -> str | None:
+        """Read the access token stored in DB by the auth callback, if still valid."""
+        try:
+            from database import SessionLocal
+            from models import AppSetting
+            from security import decrypt_token
+
+            enc_key = getattr(app_settings, "ENCRYPTION_KEY", None) or ""
+            db = SessionLocal()
+            try:
+                token_row = db.query(AppSetting).filter(AppSetting.key == "spotify_access_token").first()
+                expires_row = db.query(AppSetting).filter(AppSetting.key == "spotify_token_expires_at").first()
+                if not token_row or not token_row.value:
+                    return None
+                token = decrypt_token(token_row.value.strip(), enc_key)
+                if not token or not token.strip():
+                    return None
+                if expires_row and expires_row.value:
+                    expires_at = int(expires_row.value)
+                    if time.time() > expires_at:
+                        return None
+                return token.strip()
+            finally:
+                db.close()
+        except Exception:
+            return None
+
     async def get_spotify_user_access_token(self) -> str | None:
         refresh = self.get_spotify_refresh_token()
         cid = getattr(app_settings, "SPOTIFY_CLIENT_ID", "") or os.environ.get(
@@ -552,7 +579,8 @@ class Fingerprinter:
         if r.status_code != 200:
             self.spotify_user_token = None
             self.spotify_user_token_expires_at = 0
-            return None
+            # Refresh failed — fall back to access token stored in DB by auth callback
+            return self._get_db_access_token()
         data = r.json()
         self.spotify_user_token = data["access_token"]
         ttl = (data.get("expires_in", 3600) - 60) * 1000

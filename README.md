@@ -8,7 +8,7 @@ Vibecoded by Elius (https://hmelius.com)
 
 You know that feeling — you're three hours deep in a DJ set on YouTube, you hear a track that stops you mid-scroll, and you *need* it. Or you've got a Spotify playlist that's become your lifeline and you want those files on your drive, tagged properly, no questions asked. Or maybe someone sends you a two-hour mixtape and you want to know every single track in it, timestamped, ready to save.
 
-**CrateDigger** is a self-hosted web app for music obsessives who want to own their listening, not just stream it. Two tools, one app:
+**CrateDigger** is a self-hosted web app for music obsessives who want to own their listening, not just stream it. Three tools, one app:
 
 ### Spotify ID — Your playlist, your files
 
@@ -17,6 +17,10 @@ Point it at any Spotify playlist. CrateDigger monitors it for new additions, dow
 ### Mixtape ID — Crack open any mix
 
 Paste a YouTube, SoundCloud, or Mixcloud URL (or upload a file directly). CrateDigger chops the mix into segments, fingerprints each one through **ACRCloud** and **AudD**, and hands you a **timestamped tracklist**. From there, download individual tracks or **export the whole list straight to a Spotify playlist** with one click.
+
+### Lexicon ID — Bridge your DJ library to Spotify
+
+Connect your **Lexicon DJ** library (reads the local SQLite database). Browse playlists in a hierarchical tree, view tracks, and **import any playlist to Spotify** with one click. Tracks are matched by artist + title using a multi-strategy search with candidate scoring to maximize accuracy. If a specific remix or edit exists on Spotify, it's preferred; otherwise the base track is added. Existing Spotify playlists with the same name are updated (missing tracks added) rather than duplicated.
 
 ---
 
@@ -75,7 +79,17 @@ There is **no automatic verification** that the downloaded audio is the same rec
 ## Features (Mixtape ID)
 
 - Fingerprint status check: **`GET http://localhost:8000/api/mixtape/fingerprint-status`** — confirms whether ACRCloud/AudD env is detected (no secrets returned).
-- **Export to Spotify playlist** uses the same user session as **Spotify ID → Settings** (one connect). Optional Mixtape-only OAuth exists if you never open Settings.
+- **Import to Spotify** uses the same user session as **Spotify ID → Settings** (one connect). Optional Mixtape-only OAuth exists if you never open Settings.
+
+## Features (Lexicon ID)
+
+- Reads your **Lexicon DJ** database (read-only, never modifies your library).
+- Configurable database path (default: `~/Library/Application Support/Lexicon/main.db`).
+- Hierarchical playlist tree with folder navigation.
+- **Import to Spotify** — matches tracks using multi-strategy search: tries the specific remix/edit first, then falls back to the base track. Candidate scoring rejects wrong matches.
+- **Update existing playlists** — if a Spotify playlist with the same name already exists, adds only missing tracks.
+- Real-time import progress (SSE) showing per-track match status.
+- Uses the same Spotify connection and import engine as Mixtape ID.
 
 ## Requirements
 

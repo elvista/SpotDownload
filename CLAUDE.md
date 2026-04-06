@@ -4,10 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**CrateDigger** is a self-hosted web app with two areas in one React shell:
+**CrateDigger** is a self-hosted web app with three sections in one React shell:
 
 1. **Spotify ID** — Monitors Spotify playlists and downloads new tracks (Python FastAPI, SQLite, SSE).
 2. **Mixtape ID** — Fingerprints long mixes (upload or YouTube / SoundCloud / Mixcloud) and builds a timestamped track list (FastAPI routes at `/api/mixtape`, ACRCloud / AudD, SSE).
+3. **Lexicon ID** — Reads a local Lexicon DJ library (SQLite, read-only) and imports playlists to Spotify with intelligent track matching.
 
 Single **FastAPI** backend on **:8000**, shared **repo-root `.env`**, Vite on **:5173** proxying **`/api` → FastAPI**.
 
@@ -58,26 +59,39 @@ pre-commit run --all-files   # Runs ruff (backend) + eslint (frontend)
 
 - **Entry point**: `backend/main.py` — app init, lifespan (DB init, dirs, APScheduler start), CORS, router registration
 - **3-layer pattern**: `routers/` → `services/` → `models.py` + `database.py`
-- **Routers**: playlists, downloads, monitor, settings, auth, export_import, **mixtape** — under `/api`
-- **Key services**: `spotify.py`, `downloader.py`, `monitor.py`, `sync_ops.py`, **`audio_processor.py`**, **`fingerprinter.py`**, **`mixtape_processor.py`**
+- **Routers**: playlists, downloads, monitor, settings, auth, export_import, **mixtape**, **lexicon** — under `/api`
+- **Key services**: `spotify.py`, `downloader.py`, `monitor.py`, `sync_ops.py`, **`audio_processor.py`**, **`fingerprinter.py`**, **`mixtape_processor.py`**, **`spotify_service.py`** (shared Spotify search/matching/playlist import), **`lexicon_service.py`** (Lexicon DJ DB reader)
 - **Config**: `backend/config.py` loads **repo-root** `.env` (`Path(backend).parent.parent / ".env"`)
 
 ### Spotify ID downloads (by design)
 
 `downloader.py` resolves audio via **YouTube search** (`ytsearch1`), then applies **Spotify** metadata to the file. **Wrong-video matches are possible**; there is **no** built-in acoustic or metadata verification. Reliable auto-verification is **hard for indie/niche** tracks, so this limitation is **documented in README** and treated as an **intentional non-goal** — not a pending bugfix. Progress payloads expose `source_title` / `source_url` for manual checks.
 
+### Lexicon ID
+
+`lexicon_service.py` reads the Lexicon DJ SQLite database in **read-only mode** (`?mode=ro`). Playlists form a tree via `parentId` (type 1 = folder, 2 = playlist, 3 = smart list). Import to Spotify uses the shared `spotify_service.py`.
+
+### Shared Spotify Import (`spotify_service.py`)
+
+Used by both Mixtape ID and Lexicon ID. Multi-strategy search with candidate scoring:
+1. Tries the **specific version** first (with remix/edit info in title).
+2. Falls back to the **base track** (all parentheticals stripped) only if the specific version isn't on Spotify.
+3. Fetches 5 candidates per search and scores by artist + title token overlap; rejects mismatches below threshold.
+4. Uses Spotify's Feb 2026 `/items` endpoint (not the deprecated `/tracks`).
+
 ### Frontend (React 18 + Vite + TailwindCSS)
 
 - **Entry**: `frontend/src/main.jsx` — `BrowserRouter`, `HeaderProvider`, `App`
-- **Routes** (`frontend/src/App.jsx`): `/` → `SpotDownloadView`, `/mixtape` → `MixtapeView`
-- **Layout**: `frontend/src/components/Layout.jsx` — **CrateDigger** branding, nav **Spotify ID** / **Mixtape ID**, settings hidden on `/mixtape`
+- **Routes** (`frontend/src/App.jsx`): `/` → `SpotDownloadView`, `/mixtape` → `MixtapeView`, `/lexicon` → `LexiconView`
+- **Layout**: `frontend/src/components/Layout.jsx` — **CrateDigger** branding, nav **Spotify ID** / **Mixtape ID** / **Lexicon ID**, settings gear on all pages, dynamic Spotify connection indicator
 - **Header go-home**: `frontend/src/context/HeaderContext.jsx` — playlist detail view registers "back" for the header
 - **API client**: `frontend/src/api/client.js` — CrateDigger REST
-- **SSE**: `hooks/useSSE.js` — download progress; Mixtape uses `EventSource` on `/api/mixtape/stream/:id` inside `MixtapeView`
+- **SSE**: `hooks/useSSE.js` — download progress; Mixtape uses `EventSource` on `/api/mixtape/stream/:id` inside `MixtapeView`; Lexicon uses `EventSource` on `/api/lexicon/import-stream/:id` inside `LexiconView`
+- **Components**: `PlaylistTree.jsx` — recursive tree for Lexicon playlist sidebar
 
 ### Vite dev proxy (`frontend/vite.config.js`)
 
-- `/api` → `http://localhost:8000` (FastAPI — includes `/api/mixtape`)
+- `/api` → `http://localhost:8000` (FastAPI — includes `/api/mixtape` and `/api/lexicon`)
 
 ### Production hosting
 
@@ -109,7 +123,9 @@ Single **`.env` at the repository root** (see `.env.example`).
 
 Register **both** Spotify redirect URIs in the Spotify Developer Dashboard if you use Mixtape-only login; Settings-only users still need the main **`/api/auth/spotify/callback`** URI.
 
-**Spotify ID OAuth** (`routers/auth.py`): Authorization Code **with PKCE** (`code_challenge` / `code_verifier`); token exchange posts `client_id` and `code_verifier` only (no `client_secret` in that request, per Spotify's PKCE tutorial).
+**Spotify ID OAuth** (`routers/auth.py`): Authorization Code **with PKCE** (`code_challenge` / `code_verifier`); token exchange posts `client_id`, `code_verifier`, AND `client_secret` via `Authorization: Basic` header. PKCE state is stored in a **file** (`cache/pkce-states.json`), not in-memory, so it survives server restarts/auto-reload. Auth popup uses `show_dialog=true` to force re-consent.
+
+**Spotify API (Feb 2026)**: Playlist item endpoints were renamed from `/tracks` to `/items` (e.g., `POST /playlists/{id}/items`). The old `/tracks` endpoints return 403 for Development Mode apps. All code uses the new `/items` endpoints.
 
 **Shared optional**
 

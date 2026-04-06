@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, NavLink } from 'react-router-dom';
+import { api } from '../api/client';
 
 export default React.memo(function Layout({
   children,
@@ -7,6 +8,15 @@ export default React.memo(function Layout({
   onGoHome,
   showSettings = true,
 }) {
+  const [spotifyConnected, setSpotifyConnected] = useState(false);
+
+  useEffect(() => {
+    api.getAuthStatus().then((s) => setSpotifyConnected(s.connected)).catch(() => {});
+    const interval = setInterval(() => {
+      api.getAuthStatus().then((s) => setSpotifyConnected(s.connected)).catch(() => {});
+    }, 15000);
+    return () => clearInterval(interval);
+  }, []);
   const navClass = ({ isActive }) =>
     `text-sm font-medium px-3 py-1.5 rounded-lg transition-colors ${
       isActive ? 'bg-white/10 text-white' : 'text-spotify-light-gray hover:text-white hover:bg-white/5'
@@ -54,7 +64,7 @@ export default React.memo(function Layout({
                     Crate<span className="text-spotify-green">Digger</span>
                   </span>
                   <span className="text-[10px] uppercase tracking-wider text-spotify-light-gray/80 hidden sm:block">
-                    Spotify ID · mixtapes
+                    Spotify ID · Mixtapes · Lexicon
                   </span>
                 </div>
               </Link>
@@ -66,13 +76,18 @@ export default React.memo(function Layout({
                 <NavLink to="/mixtape" className={navClass}>
                   Mixtape ID
                 </NavLink>
+                <NavLink to="/lexicon" className={navClass}>
+                  Lexicon ID
+                </NavLink>
               </nav>
             </div>
 
             <div className="flex items-center gap-4 ml-auto">
               <div className="flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-spotify-green pulse-green" />
-                <span className="text-xs text-spotify-light-gray hidden sm:inline">Connected</span>
+                <div className={`h-2 w-2 rounded-full ${spotifyConnected ? 'bg-spotify-green pulse-green' : 'bg-red-400'}`} />
+                <span className="text-xs text-spotify-light-gray hidden sm:inline">
+                  {spotifyConnected ? 'Connected' : 'Disconnected'}
+                </span>
               </div>
               {showSettings ? (
                 <button
@@ -105,8 +120,8 @@ export default React.memo(function Layout({
         <div className="max-w-7xl mx-auto">
           <p className="text-xs text-spotify-light-gray/90 leading-relaxed max-w-3xl">
             Spotify ID uses playlist and track metadata from Spotify; audio is matched via YouTube search (quality varies).
-            Mixtape ID uses third-party fingerprinting APIs. Use of Spotify, YouTube, and those services is subject to
-            their terms; respect applicable copyright.
+            Mixtape ID uses third-party fingerprinting APIs. Lexicon ID reads your local Lexicon DJ library. Use of Spotify,
+            YouTube, and those services is subject to their terms; respect applicable copyright.
           </p>
         </div>
       </footer>

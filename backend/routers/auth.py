@@ -1,8 +1,10 @@
 import base64
 import hashlib
+import json
 import logging
 import secrets
 import time
+from pathlib import Path
 from urllib.parse import urlencode
 
 import httpx
@@ -29,16 +31,50 @@ SCOPES = [
     "playlist-read-private",
 ]
 
-# state -> (code_verifier, created_ms); PKCE verifier must match token exchange
-_spotify_pkce_states: dict[str, tuple[str, float]] = {}
-_PKCE_STATE_TTL_MS = 600_000
+# --- File-based PKCE state storage (survives server restarts / auto-reload) ---
+
+_PKCE_STATE_FILE = Path(__file__).resolve().parent.parent / "cache" / "pkce-states.json"
+_PKCE_STATE_TTL_S = 600  # 10 minutes
 
 
-def _prune_spotify_pkce_states() -> None:
-    now = time.time() * 1000
-    dead = [k for k, (_, t) in _spotify_pkce_states.items() if now - t > _PKCE_STATE_TTL_MS]
-    for k in dead:
-        _spotify_pkce_states.pop(k, None)
+def _load_pkce_states() -> dict[str, dict]:
+    try:
+        if _PKCE_STATE_FILE.exists():
+            return json.loads(_PKCE_STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _save_pkce_states(states: dict[str, dict]) -> None:
+    _PKCE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _PKCE_STATE_FILE.write_text(json.dumps(states), encoding="utf-8")
+
+
+def _store_pkce_state(state: str, code_verifier: str) -> None:
+    states = _load_pkce_states()
+    now = time.time()
+    # Prune expired
+    states = {k: v for k, v in states.items() if now - v.get("t", 0) < _PKCE_STATE_TTL_S}
+    states[state] = {"v": code_verifier, "t": now}
+    _save_pkce_states(states)
+
+
+def _pop_pkce_state(state: str) -> str | None:
+    states = _load_pkce_states()
+    now = time.time()
+    entry = states.pop(state, None)
+    # Prune expired
+    states = {k: v for k, v in states.items() if now - v.get("t", 0) < _PKCE_STATE_TTL_S}
+    _save_pkce_states(states)
+    if not entry:
+        return None
+    if now - entry.get("t", 0) > _PKCE_STATE_TTL_S:
+        return None
+    return entry.get("v")
+
+
+# --- Helpers ---
 
 
 def _scope_param() -> str:
@@ -87,6 +123,9 @@ def set_setting(db: Session, key: str, value: str):
     db.commit()
 
 
+# --- Endpoints ---
+
+
 @router.get("/auth/spotify")
 def spotify_login():
     """Redirect user to Spotify authorization (Authorization Code + PKCE)."""
@@ -99,11 +138,10 @@ def spotify_login():
         )
 
     redirect_uri = (settings.SPOTIFY_REDIRECT_URI or SPOTIFY_REDIRECT_URI_EXACT).strip()
-    _prune_spotify_pkce_states()
     code_verifier = secrets.token_urlsafe(64)
     code_challenge = _pkce_challenge(code_verifier)
     state = secrets.token_hex(16)
-    _spotify_pkce_states[state] = (code_verifier, time.time() * 1000)
+    _store_pkce_state(state, code_verifier)
 
     params = {
         "client_id": cid,
@@ -113,6 +151,7 @@ def spotify_login():
         "code_challenge_method": "S256",
         "code_challenge": code_challenge,
         "state": state,
+        "show_dialog": "true",
     }
     auth_url = f"https://accounts.spotify.com/authorize?{urlencode(params)}"
     return RedirectResponse(url=auth_url)
@@ -138,17 +177,15 @@ def spotify_callback(
         logger.error("Spotify callback missing state (PKCE)")
         return RedirectResponse(url=f"{ui}?auth=error")
 
-    _prune_spotify_pkce_states()
-    pkce = _spotify_pkce_states.pop(state, None)
-    if not pkce:
+    code_verifier = _pop_pkce_state(state)
+    if not code_verifier:
         logger.error("Spotify callback invalid or expired state")
         return RedirectResponse(url=f"{ui}?auth=error")
 
-    code_verifier, _ = pkce
     redirect_uri = (settings.SPOTIFY_REDIRECT_URI or SPOTIFY_REDIRECT_URI_EXACT).strip()
     cid = (settings.SPOTIFY_CLIENT_ID or "").strip()
+    secret = (settings.SPOTIFY_CLIENT_SECRET or "").strip()
 
-    # PKCE token exchange (Spotify): client_id + code_verifier only — do not send client_secret here.
     token_data = {
         "grant_type": "authorization_code",
         "code": code,
@@ -156,7 +193,11 @@ def spotify_callback(
         "client_id": cid,
         "code_verifier": code_verifier,
     }
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    creds = base64.b64encode(f"{cid}:{secret}".encode()).decode()
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Authorization": f"Basic {creds}",
+    }
 
     try:
         with httpx.Client(timeout=20.0) as client:
@@ -168,6 +209,9 @@ def spotify_callback(
     except Exception as e:
         logger.exception("Spotify token exchange: %s", e)
         return RedirectResponse(url=f"{ui}?auth=error")
+
+    granted_scope = token_info.get("scope", "")
+    logger.info("Spotify auth success — granted scopes: [%s]", granted_scope)
 
     refresh = token_info.get("refresh_token")
     if not refresh:

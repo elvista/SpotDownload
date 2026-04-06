@@ -71,7 +71,24 @@ export default React.memo(function SettingsModal({ isOpen, onClose }) {
   }, [downloadPath]);
 
   const handleConnectSpotify = useCallback(() => {
-    window.open(`${window.location.origin}/api/auth/spotify`, '_blank', 'noopener,noreferrer');
+    const w = 500, h = 700;
+    const left = window.screenX + (window.outerWidth - w) / 2;
+    const top = window.screenY + (window.outerHeight - h) / 2;
+    const popup = window.open(
+      `${window.location.origin}/api/auth/spotify`,
+      'spotify_auth',
+      `width=${w},height=${h},left=${left},top=${top}`,
+    );
+    if (!popup) return;
+    const poll = setInterval(async () => {
+      if (popup.closed) {
+        clearInterval(poll);
+        try {
+          const status = await api.getAuthStatus();
+          setSpotifyConnected(status.connected);
+        } catch { /* ignore */ }
+      }
+    }, 500);
   }, []);
 
   const handleDisconnectSpotify = useCallback(async () => {
@@ -83,20 +100,6 @@ export default React.memo(function SettingsModal({ isOpen, onClose }) {
     }
   }, []);
 
-  useEffect(() => {
-    const handleAuthMessage = () => {
-      const params = new URLSearchParams(window.location.search);
-      const authStatus = params.get('auth');
-      if (authStatus === 'success') {
-        setSpotifyConnected(true);
-        window.history.replaceState({}, '', window.location.pathname);
-      }
-    };
-    
-    if (isOpen) {
-      handleAuthMessage();
-    }
-  }, [isOpen]);
 
   if (!isOpen) return null;
 

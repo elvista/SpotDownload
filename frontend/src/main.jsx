@@ -8,6 +8,11 @@ import { HeaderProvider } from './context/HeaderContext.jsx'
 import { initTheme } from './utils/theme'
 import './index.css'
 
+// Auto-close Spotify auth popup after callback redirect
+if (window.opener && new URLSearchParams(window.location.search).has('auth')) {
+  window.close();
+}
+
 initTheme()
 
 ReactDOM.createRoot(document.getElementById('root')).render(
