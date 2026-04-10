@@ -70,22 +70,30 @@ export const api = {
   
   disconnectSpotify: () => request('/auth/spotify', { method: 'DELETE' }),
 
-  // Lexicon
-  getLexiconDbStatus: () => request('/lexicon/db-status'),
+  // Genre ID
+  getGenreIdDbStatus: () => request('/genreid/db-status'),
 
-  setLexiconDbPath: (path) => request('/lexicon/db-path', {
+  setGenreIdDbPath: (path) => request('/genreid/db-path', {
     method: 'PUT',
     body: JSON.stringify({ path }),
   }),
 
-  getLexiconPlaylists: () => request('/lexicon/playlists'),
+  getGenreIdTracks: ({ search = '', page = 1, pageSize = 50, filter = 'all' } = {}) =>
+    request(`/genreid/tracks?search=${encodeURIComponent(search)}&page=${page}&page_size=${pageSize}&filter=${filter}`),
 
-  getLexiconPlaylistTracks: (id) => request(`/lexicon/playlists/${id}/tracks`),
-
-  getLexiconSpotifyStatus: () => request('/lexicon/spotify-status'),
-
-  importLexiconToSpotify: (playlistId, playlistName) => request('/lexicon/import-to-spotify', {
+  scanGenres: ({ rescan = false } = {}) => request('/genreid/scan', {
     method: 'POST',
-    body: JSON.stringify({ playlistId, playlistName }),
+    body: JSON.stringify({ rescan }),
   }),
+
+  approveGenres: (tracks) => request('/genreid/approve', {
+    method: 'POST',
+    body: JSON.stringify({ tracks }),
+  }),
+
+  getStaged: () => request('/genreid/staged'),
+
+  exportToLexicon: () => request('/genreid/export', { method: 'POST' }),
+
+  clearStaged: () => request('/genreid/staged', { method: 'DELETE' }),
 };

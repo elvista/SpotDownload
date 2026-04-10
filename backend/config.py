@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     MONITOR_INTERVAL_MINUTES: int = 30
     DOWNLOAD_CONCURRENCY: int = Field(default=3, ge=1, le=8)
     ENCRYPTION_KEY: str = ""  # Optional. If set, Spotify tokens are encrypted at rest.
+    ANTHROPIC_API_KEY: str = ""
+    LASTFM_API_KEY: str = ""
 
     @field_validator("SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET", mode="before")
     @classmethod

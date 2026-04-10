@@ -58,6 +58,10 @@ Thumbs.db
 # Bun
 bun.lockb
 
+# Cache files
+.cache
+*.cache
+
 # Debug / local tooling
 .cursor/debug-*.log
 .python-version

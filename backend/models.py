@@ -55,3 +55,15 @@ class AppSetting(Base):
 
     key = Column(String, primary_key=True, nullable=False)
     value = Column(Text, default="")
+
+
+class StagedGenre(Base):
+    __tablename__ = "staged_genres"
+
+    id = Column(Integer, primary_key=True, index=True)
+    lexicon_track_id = Column(Integer, nullable=False, index=True, unique=True)
+    title = Column(String, nullable=False)
+    artist = Column(String, nullable=False)
+    suggested_genre = Column(String, nullable=False)
+    approved = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))

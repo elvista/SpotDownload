@@ -21,5 +21,8 @@ tenacity
 # Migrations
 alembic
 
+# AI
+anthropic
+
 # Security
 cryptography

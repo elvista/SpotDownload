@@ -64,7 +64,7 @@ export default React.memo(function Layout({
                     Crate<span className="text-spotify-green">Digger</span>
                   </span>
                   <span className="text-[10px] uppercase tracking-wider text-spotify-light-gray/80 hidden sm:block">
-                    Spotify ID · Mixtapes · Lexicon
+                    Spotify ID · Mixtapes · Genre ID
                   </span>
                 </div>
               </Link>
@@ -76,8 +76,8 @@ export default React.memo(function Layout({
                 <NavLink to="/mixtape" className={navClass}>
                   Mixtape ID
                 </NavLink>
-                <NavLink to="/lexicon" className={navClass}>
-                  Lexicon ID
+                <NavLink to="/genreid" className={navClass}>
+                  Genre ID
                 </NavLink>
               </nav>
             </div>
@@ -120,8 +120,8 @@ export default React.memo(function Layout({
         <div className="max-w-7xl mx-auto">
           <p className="text-xs text-spotify-light-gray/90 leading-relaxed max-w-3xl">
             Spotify ID uses playlist and track metadata from Spotify; audio is matched via YouTube search (quality varies).
-            Mixtape ID uses third-party fingerprinting APIs. Lexicon ID reads your local Lexicon DJ library. Use of Spotify,
-            YouTube, and those services is subject to their terms; respect applicable copyright.
+            Mixtape ID uses third-party fingerprinting APIs. Genre ID uses Claude AI to classify track genres.
+            Use of Spotify, YouTube, and those services is subject to their terms; respect applicable copyright.
           </p>
         </div>
       </footer>

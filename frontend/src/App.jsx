@@ -6,7 +6,7 @@ import { useHeaderContext } from './context/HeaderContext';
 
 const SpotDownloadView = lazy(() => import('./views/SpotDownloadView'));
 const MixtapeView = lazy(() => import('./views/MixtapeView'));
-const LexiconView = lazy(() => import('./views/LexiconView'));
+const GenreIDView = lazy(() => import('./views/GenreIDView'));
 
 function RouteFallback() {
   return (
@@ -53,10 +53,10 @@ export default function App() {
           }
         />
         <Route
-          path="lexicon"
+          path="genreid"
           element={
             <Suspense fallback={<RouteFallback />}>
-              <LexiconView />
+              <GenreIDView />
             </Suspense>
           }
         />

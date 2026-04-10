@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 
 from config import settings as app_config
 from database import SessionLocal, init_db
-from routers import auth, downloads, export_import, lexicon, mixtape, monitor, playlists
+from routers import auth, downloads, export_import, genreid, mixtape, monitor, playlists
 from routers import settings as settings_router
 from services.monitor import MonitorService
 
@@ -90,7 +90,7 @@ app.include_router(settings_router.router, prefix="/api")
 app.include_router(export_import.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(mixtape.router, prefix="/api")
-app.include_router(lexicon.router, prefix="/api")
+app.include_router(genreid.router, prefix="/api")
 
 
 @app.get("/api/health")
