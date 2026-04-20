@@ -7,23 +7,16 @@ import json
 import logging
 import os
 import re
-import secrets
 import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
 
-import httpx
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sse_starlette.sse import EventSourceResponse
 
-from config import settings as app_settings
-from database import SessionLocal
-from models import AppSetting
-from security import encrypt_token
 from services import audio_processor
 from services.fingerprinter import fingerprinter
 from services.mixtape_processor import process_audio_file_streaming
@@ -37,13 +30,10 @@ URL_CACHE_PATH = CACHE_DIR / "url-cache.json"
 
 router = APIRouter(prefix="/mixtape", tags=["mixtape"])
 
-MIXTAPE_REFRESH_KEY = "mixtape_spotify_refresh_token"
-
 # --- Session broadcast (SSE): one queue per connected client -----------------
 
 _last_processed_file: dict[str, Any] | None = None
 _url_cache: dict[str, dict[str, Any]] = {}
-_spotify_oauth_states: dict[str, float] = {}
 
 
 class _SessionHub:
@@ -151,40 +141,6 @@ def _commit_last_file(file_path: str, mixtape_name: str) -> None:
         "size": st.st_size,
     }
     _save_last_file_info()
-
-
-def _set_mixtape_refresh_token(refresh: str) -> None:
-    enc = encrypt_token(refresh, getattr(app_settings, "ENCRYPTION_KEY", None) or "")
-    db = SessionLocal()
-    try:
-        row = db.query(AppSetting).filter(AppSetting.key == MIXTAPE_REFRESH_KEY).first()
-        if row:
-            row.value = enc
-        else:
-            db.add(AppSetting(key=MIXTAPE_REFRESH_KEY, value=enc))
-        db.commit()
-    finally:
-        db.close()
-    # Legacy file compatibility
-    try:
-        p = fingerprinter.spotify_user_token_path()
-        p.write_text(
-            json.dumps(
-                {"refresh_token": refresh, "savedAt": datetime.now(UTC).isoformat()}, indent=2
-            ),
-            encoding="utf-8",
-        )
-    except OSError as e:
-        logger.warning("Could not write spotify-user-token.json: %s", e)
-    fingerprinter.spotify_user_token = None
-    fingerprinter.spotify_user_token_expires_at = 0
-
-
-def get_spotify_redirect_uri() -> str:
-    env = (os.environ.get("SPOTIFY_REDIRECT_URI_MIXID") or "").strip()
-    if env:
-        return env
-    return "http://127.0.0.1:8000/api/mixtape/spotify/callback"
 
 
 def spotify_client_configured() -> bool:
@@ -445,112 +401,6 @@ def spotify_status():
     return {"clientConfigured": spotify_client_configured(), "hasRefreshToken": has_refresh}
 
 
-@router.get("/spotify/login")
-def spotify_login():
-    if not spotify_client_configured():
-        raise HTTPException(
-            status_code=400,
-            detail="Add SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET to .env first.",
-        )
-    now = time.time() * 1000
-    for s, t in list(_spotify_oauth_states.items()):
-        if now - t > 600_000:
-            del _spotify_oauth_states[s]
-    state = secrets.token_hex(16)
-    _spotify_oauth_states[state] = now
-    redirect_uri = get_spotify_redirect_uri()
-    params = urlencode(
-        {
-            "response_type": "code",
-            "client_id": os.environ.get("SPOTIFY_CLIENT_ID", ""),
-            "scope": "playlist-modify-private",
-            "redirect_uri": redirect_uri,
-            "state": state,
-        }
-    )
-    return RedirectResponse(url=f"https://accounts.spotify.com/authorize?{params}")
-
-
-@router.get("/spotify/callback")
-async def spotify_callback(
-    code: str | None = Query(None),
-    state: str | None = Query(None),
-    error: str | None = Query(None),
-):
-    if error:
-        return HTMLResponse(
-            content=(
-                f"<html><body><p>Spotify authorization failed: {error}</p>"
-                '<p><a href="http://localhost:5173/mixtape">Back to Mixtape ID</a></p></body></html>'
-            ),
-            status_code=400,
-        )
-    if not code or not state or state not in _spotify_oauth_states:
-        return HTMLResponse(
-            content=(
-                "<html><body><p>Invalid or expired login. Close this tab and click Spotify Playlist again "
-                "on Mixtape ID.</p></body></html>"
-            ),
-            status_code=400,
-        )
-    _spotify_oauth_states.pop(state, None)
-    if not spotify_client_configured():
-        return HTMLResponse(content="Spotify app credentials missing on server.", status_code=500)
-
-    redirect_uri = get_spotify_redirect_uri()
-    cid = os.environ.get("SPOTIFY_CLIENT_ID", "")
-    secret = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
-    import base64
-
-    creds = base64.b64encode(f"{cid}:{secret}".encode()).decode()
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            r = await client.post(
-                "https://accounts.spotify.com/api/token",
-                data={
-                    "grant_type": "authorization_code",
-                    "code": code,
-                    "redirect_uri": redirect_uri,
-                },
-                headers={
-                    "Authorization": f"Basic {creds}",
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-            )
-        if r.status_code != 200:
-            logger.error("Spotify token exchange: %s", r.text)
-            return HTMLResponse(
-                content=(
-                    "<html><body><p>Could not complete Spotify login. Check Redirect URI in your Spotify app "
-                    "matches this server (see SPOTIFY_REDIRECT_URI_MIXID or default /api/mixtape/spotify/callback).</p></body></html>"
-                ),
-                status_code=500,
-            )
-        data = r.json()
-        refresh = data.get("refresh_token")
-        if not refresh:
-            return HTMLResponse(
-                content=(
-                    "<html><body><p>No refresh token from Spotify. Revoke access in Spotify account settings "
-                    "and try connecting again.</p></body></html>"
-                ),
-                status_code=500,
-            )
-        _set_mixtape_refresh_token(refresh)
-    except Exception as e:
-        logger.exception("Spotify callback: %s", e)
-        return HTMLResponse(content=f"<html><body><p>Error: {e}</p></body></html>", status_code=500)
-
-    return HTMLResponse(
-        content="""<!DOCTYPE html><html><head><meta charset="utf-8"><title>Spotify connected</title></head>
-<body style="font-family:system-ui;padding:2rem;">
-<p><strong>Spotify connected.</strong> You can close this tab and return to CrateDigger, then click
-<strong>Spotify Playlist</strong> again.</p>
-<script>setTimeout(function(){ window.close(); }, 800);</script>
-</body></html>"""
-    )
-
-
 class CreatePlaylistBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -589,10 +439,8 @@ async def create_spotify_playlist(body: CreatePlaylistBody):
             status_code=400,
             content={
                 "error": "Connect Spotify once: open Spotify ID (home), click the gear (Settings), and connect "
-                "your account. That same login is used to create Mixtape playlists — no separate Mixtape OAuth "
-                "required. Or set SPOTIFY_REFRESH_TOKEN in .env.",
+                "your account. That same login creates Mixtape playlists.",
                 "needsSpotifyAuth": True,
-                "spotifyLoginPath": "/api/mixtape/spotify/login",
             },
         )
 
@@ -601,10 +449,8 @@ async def create_spotify_playlist(body: CreatePlaylistBody):
         return JSONResponse(
             status_code=500,
             content={
-                "error": "Could not refresh your Spotify session. Re-connect in Settings (Spotify ID), or use "
-                "Mixtape-only login below.",
+                "error": "Could not refresh your Spotify session. Re-connect in Settings (Spotify ID).",
                 "needsSpotifyAuth": True,
-                "spotifyLoginPath": "/api/mixtape/spotify/login",
             },
         )
 

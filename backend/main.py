@@ -5,7 +5,8 @@ from pathlib import Path
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from config import settings as app_config
 from database import SessionLocal, init_db
@@ -96,3 +97,19 @@ app.include_router(genreid.router, prefix="/api")
 @app.get("/api/health")
 def health():
     return {"status": "ok", "monitor_running": scheduler.running}
+
+
+FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if FRONTEND_DIST.is_dir():
+    assets_dir = FRONTEND_DIST / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def spa_fallback(full_path: str):
+        if full_path.startswith("api/") or full_path in ("openapi.json", "docs", "redoc"):
+            raise HTTPException(status_code=404)
+        target = FRONTEND_DIST / full_path
+        if target.is_file():
+            return FileResponse(target)
+        return FileResponse(FRONTEND_DIST / "index.html")

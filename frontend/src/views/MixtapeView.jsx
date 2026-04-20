@@ -71,13 +71,6 @@ function getTimeAgo(dateStr) {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-/** Same-origin URL for API paths (Vite proxy or production same host). */
-function sameOriginApiPath(path) {
-  if (!path) return path;
-  if (path.startsWith('http://') || path.startsWith('https://')) return path;
-  return `${window.location.origin}${path.startsWith('/') ? '' : '/'}${path}`;
-}
-
 function formatApiErrorBody(data) {
   if (!data || typeof data !== 'object') return '';
   if (typeof data.error === 'string' && data.error) return data.error;
@@ -636,16 +629,8 @@ export default function MixtapeView() {
         }
       }
       if (!response.ok) {
-        if (data.needsSpotifyAuth && data.spotifyLoginPath) {
-          toast.info('Tip: connect Spotify under Settings on Spotify ID (gear icon) — that covers Mixtape playlists too.');
-          const openLogin = window.confirm(
-            `${data.error || 'Connect Spotify.'}\n\nOpen the alternate Mixtape-only Spotify login? (Cancel if you will use Settings on Spotify ID instead.)`
-          );
-          if (openLogin) {
-            const loginUrl = sameOriginApiPath(data.spotifyLoginPath);
-            const w = window.open(loginUrl, '_blank', 'noopener,noreferrer');
-            if (!w) toast.error('Popup blocked — allow popups or open the login URL manually.');
-          }
+        if (data.needsSpotifyAuth) {
+          toast.info('Connect Spotify under Settings on Spotify ID (gear icon).');
           return;
         }
         throw new Error(formatApiErrorBody(data) || 'Failed to create playlist');

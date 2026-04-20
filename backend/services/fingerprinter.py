@@ -498,17 +498,17 @@ class Fingerprinter:
             enc_key = getattr(app_settings, "ENCRYPTION_KEY", None) or ""
             db = SessionLocal()
             try:
-                # Spotify ID Settings login (playlist scopes) — same token works for Mixtape playlists.
-                for setting_key in ("spotify_refresh_token", "mixtape_spotify_refresh_token"):
-                    row = (
-                        db.query(AppSetting).filter(AppSetting.key == setting_key).first()
-                    )
-                    if row and row.value:
-                        raw = row.value.strip()
-                        if raw:
-                            val = decrypt_token(raw, enc_key)
-                            if val and val.strip():
-                                return val.strip()
+                row = (
+                    db.query(AppSetting)
+                    .filter(AppSetting.key == "spotify_refresh_token")
+                    .first()
+                )
+                if row and row.value:
+                    raw = row.value.strip()
+                    if raw:
+                        val = decrypt_token(raw, enc_key)
+                        if val and val.strip():
+                            return val.strip()
             finally:
                 db.close()
         except Exception:

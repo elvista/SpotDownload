@@ -1,6 +1,6 @@
 """Shared Spotify search, matching, and playlist import service.
 
-Used by both Lexicon ID and Mixtape ID.
+Used by Mixtape ID.
 """
 
 from __future__ import annotations
