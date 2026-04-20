@@ -16,6 +16,26 @@ Everything runs locally: **FastAPI** + **SQLite** + **React (Vite)**. One **repo
 
 **Lexicon ID** reads the Lexicon DJ SQLite database in **read-only mode** — it never modifies your library. The database path is configurable in the Lexicon ID UI (default: `~/Library/Application Support/Lexicon/main.db`).
 
+## Spotify ID — adding non-owned public playlists
+
+CrateDigger supports adding any public Spotify playlist, including ones you don't own. This works around a Spotify **Developer Mode** restriction (Feb 2026) that blocks third-party apps from reading tracks of non-owned playlists — even public ones — via the Web API:
+
+- `GET /playlists/{id}` returns metadata only, with no `tracks` field
+- `GET /playlists/{id}/items` and `/tracks` both return **403 Forbidden**
+
+When the API blocks track access, CrateDigger falls back to parsing the **public Spotify embed page** (`open.spotify.com/embed/playlist/{id}`), which inlines a JSON payload with track info. This is the same page that powers the shareable Spotify widget, so no authenticated or undocumented endpoints are involved.
+
+**Limitations of the embed fallback** (only triggered for non-owned playlists):
+
+- **Capped at 100 tracks** — the embed only inlines the first 100; there is no pagination mechanism.
+- **Album name unavailable** — stored as empty string.
+- **Per-track artwork** falls back to the playlist cover.
+- **No artist genre lookup** — artist IDs are not exposed via the embed.
+
+Playlists you own (or collaborate on) are fetched through the full Web API and have none of these limitations.
+
+**Workarounds for > 100 tracks on non-owned playlists:** duplicate the playlist to your own Spotify account first (right-click → "Add to Other Playlist" → "New Playlist"), then add that URL. Or apply for Spotify Extended Quota mode to lift Dev Mode restrictions on your developer app.
+
 ## Where to read more
 
 | Doc | Purpose |

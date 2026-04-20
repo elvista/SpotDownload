@@ -1,10 +1,12 @@
 """Spotify Web API client: playlists, artists, genres, and user OAuth for archive/empty."""
 
 import asyncio
+import json
 import logging
 import re
 import time
 
+import httpx
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials, SpotifyOAuth
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
@@ -14,9 +16,10 @@ from config import settings
 logger = logging.getLogger("cratedigger.spotify")
 
 try:
-    from spotipy.exceptions import SpotifyException
+    from spotipy.exceptions import SpotifyException, SpotifyOauthError
 except ImportError:
     SpotifyException = Exception  # type: ignore[misc, assignment]
+    SpotifyOauthError = Exception  # type: ignore[misc, assignment]
 
 
 class SpotifyAuthError(Exception):
@@ -101,9 +104,90 @@ class SpotifyService:
         wait=wait_exponential(multiplier=1, min=2, max=60),
     )
     def _fetch_playlist_page(self, playlist_id: str, sp=None) -> dict:
-        """Fetch playlist from API (retries on 429/5xx). Uses optional sp client (user auth)."""
+        """Fetch playlist metadata from API (retries on 429/5xx). Uses optional sp client (user auth).
+
+        Feb 2026: Spotify stopped including `tracks` in the default `/playlists/{id}`
+        response for non-owned playlists. Tracks are fetched separately via
+        `_fetch_playlist_items` hitting the renamed `/playlists/{id}/items` endpoint.
+        """
         client = sp if sp is not None else self.sp
         return client.playlist(playlist_id)
+
+    @retry(
+        retry=retry_if_exception(_is_retryable_spotify),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=60),
+    )
+    def _fetch_playlist_items(
+        self, playlist_id: str, sp=None, limit: int = 100, offset: int = 0
+    ) -> dict:
+        """Fetch a page of playlist items via the Feb 2026 `/playlists/{id}/items` endpoint."""
+        client = sp if sp is not None else self.sp
+        return client._get(
+            f"playlists/{playlist_id}/items",
+            limit=limit,
+            offset=offset,
+            additional_types="track",
+        )
+
+    def _fetch_playlist_tracks_via_embed(
+        self, playlist_id: str, playlist_image_url: str = ""
+    ) -> list[dict]:
+        """Fetch tracks for a public playlist by scraping the public embed page.
+
+        Used as a fallback when the Web API blocks track access in Development Mode
+        for non-owned public playlists. The embed page inlines a `__NEXT_DATA__`
+        JSON blob with up to 100 tracks. Beyond 100 tracks cannot be retrieved
+        through this mechanism.
+        """
+        url = f"https://open.spotify.com/embed/playlist/{playlist_id}"
+        try:
+            with httpx.Client(timeout=20.0, headers={"User-Agent": "Mozilla/5.0"}) as c:
+                r = c.get(url)
+            if r.status_code != 200:
+                logger.warning("Embed fetch for %s returned %s", playlist_id, r.status_code)
+                return []
+            match = re.search(
+                r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
+                r.text,
+                re.DOTALL,
+            )
+            if not match:
+                logger.warning("Embed for %s missing __NEXT_DATA__", playlist_id)
+                return []
+            data = json.loads(match.group(1))
+            track_list = (
+                data.get("props", {})
+                .get("pageProps", {})
+                .get("state", {})
+                .get("data", {})
+                .get("entity", {})
+                .get("trackList")
+                or []
+            )
+        except Exception as e:
+            logger.warning("Embed parse failed for %s: %s", playlist_id, e)
+            return []
+
+        tracks = []
+        for entry in track_list:
+            uri = entry.get("uri") or ""
+            if not uri.startswith("spotify:track:"):
+                continue
+            track_id = uri.split(":", 2)[-1]
+            tracks.append(
+                {
+                    "id": track_id,
+                    "name": entry.get("title") or "",
+                    "artist": entry.get("subtitle") or "",
+                    "album": "",
+                    "duration_ms": int(entry.get("duration") or 0),
+                    "image_url": playlist_image_url,
+                    "spotify_url": f"https://open.spotify.com/track/{track_id}",
+                    "genre": "",
+                }
+            )
+        return tracks
 
     def _fetch_artists_batch(self, artist_ids: list[str]) -> None:
         """Fetch artists in chunks of 50 and populate genre cache. Spotify API limit is 50."""
@@ -129,17 +213,33 @@ class SpotifyService:
             logger.warning("Spotify get_playlist failed for id=%s: %s", playlist_id, e)
             return None
 
-        items = result["tracks"]["items"]
-        all_items = list(items)
-        while result["tracks"].get("next"):
-            result["tracks"] = client.next(result["tracks"])
-            all_items.extend(result["tracks"]["items"])
+        # Spotify Feb 2026: playlist response key renamed "tracks" → "items",
+        # per-entry key renamed "track" → "item".
+        paging = result.get("items") or result.get("tracks")
+        if not isinstance(paging, dict) or "items" not in paging:
+            # Non-owned / editorial playlists omit the embedded tracks object.
+            # Fetch items separately via the renamed /playlists/{id}/items endpoint.
+            try:
+                paging = self._fetch_playlist_items(playlist_id, sp=client)
+            except Exception as e:
+                logger.warning(
+                    "Spotify items fetch failed for id=%s: %s", playlist_id, e
+                )
+                paging = {"items": [], "next": None}
+        all_items = list(paging.get("items") or [])
+        while paging.get("next"):
+            try:
+                paging = client.next(paging)
+            except Exception as e:
+                logger.warning("Spotify pagination failed for id=%s: %s", playlist_id, e)
+                break
+            all_items.extend(paging.get("items") or [])
 
         # Collect unique artist IDs and batch-fetch genres (max 50 per request)
         artist_ids = []
         seen = set()
-        for item in all_items:
-            track = item.get("track")
+        for entry in all_items:
+            track = entry.get("item") or entry.get("track")
             if not track or not track.get("id") or not track.get("artists"):
                 continue
             aid = track["artists"][0]["id"]
@@ -149,9 +249,9 @@ class SpotifyService:
         self._fetch_artists_batch(artist_ids)
 
         tracks = []
-        for item in all_items:
-            track = item.get("track")
-            if not track or not track.get("id"):
+        for entry in all_items:
+            track = entry.get("item") or entry.get("track")
+            if not track or not track.get("id") or not track.get("artists"):
                 continue
             artist_id = track["artists"][0]["id"] if track.get("artists") else None
             genre = self._artist_genre_cache.get(artist_id, "") if artist_id else ""
@@ -171,12 +271,28 @@ class SpotifyService:
             )
 
         images = result.get("images", [])
+        playlist_image_url = images[0]["url"] if images else ""
+
+        # Dev Mode fallback: if the API blocked track access for a non-owned public
+        # playlist, scrape the public embed page (first 100 tracks only).
+        if not tracks:
+            embed_tracks = self._fetch_playlist_tracks_via_embed(
+                playlist_id, playlist_image_url=playlist_image_url
+            )
+            if embed_tracks:
+                logger.info(
+                    "Used embed fallback for playlist %s (%d tracks)",
+                    playlist_id,
+                    len(embed_tracks),
+                )
+                tracks = embed_tracks
+
         return {
             "id": result["id"],
             "name": result["name"],
             "description": result.get("description", ""),
             "owner": result["owner"]["display_name"],
-            "image_url": images[0]["url"] if images else "",
+            "image_url": playlist_image_url,
             "spotify_url": result["external_urls"].get("spotify", ""),
             "tracks": tracks,
         }
@@ -212,6 +328,8 @@ class SpotifyService:
             logger.info("Access token expired, refreshing...")
             try:
                 token_info = auth_manager.refresh_access_token(refresh_token)
+            except SpotifyOauthError as e:
+                raise SpotifyAuthError("Spotify authentication expired") from e
             except Exception as e:
                 if isinstance(e, SpotifyException) and getattr(e, "http_status", None) == 401:
                     raise SpotifyAuthError("Spotify authentication expired") from e
@@ -297,22 +415,22 @@ class SpotifyService:
     def _empty_playlist_sync(self, sp_user, playlist_id: str) -> bool:
         """Remove all tracks from a playlist."""
         try:
-            # Get all track URIs
+            # Get all track URIs via full playlist fetch (playlist_tracks 403s in Dev Mode)
+            result = sp_user.playlist(playlist_id)
+            paging = result.get("items") or result.get("tracks")
+
             track_uris = []
-            offset = 0
-            limit = 100
+            for entry in paging["items"]:
+                track = entry.get("item") or entry.get("track")
+                if track and track.get("uri"):
+                    track_uris.append(track["uri"])
 
-            while True:
-                results = sp_user.playlist_tracks(
-                    playlist_id, limit=limit, offset=offset, fields="items.track.uri,next"
-                )
-                for item in results["items"]:
-                    if item["track"] and item["track"]["uri"]:
-                        track_uris.append(item["track"]["uri"])
-
-                if not results["next"]:
-                    break
-                offset += limit
+            while paging.get("next"):
+                paging = sp_user.next(paging)
+                for entry in paging["items"]:
+                    track = entry.get("item") or entry.get("track")
+                    if track and track.get("uri"):
+                        track_uris.append(track["uri"])
 
             if not track_uris:
                 logger.info(f"Playlist {playlist_id} is already empty")

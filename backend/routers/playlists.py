@@ -1,3 +1,4 @@
+import logging
 import re
 from datetime import UTC, datetime
 
@@ -13,6 +14,7 @@ from services.spotify import SpotifyAuthError, get_spotify_service
 from services.sync_ops import dedupe_spotify_tracks, refresh_playlist_tracks
 
 router = APIRouter(tags=["playlists"])
+logger = logging.getLogger("cratedigger.playlists")
 
 # Spotify playlist URL patterns (must match before calling API; query string e.g. ?si=... allowed)
 SPOTIFY_PLAYLIST_URL_RE = re.compile(
@@ -107,10 +109,18 @@ async def add_playlist(body: PlaylistCreate, db: Session = Depends(get_db)):
                 set_setting(db, "spotify_token_expires_at", str(updated_token_info["expires_at"]))
             data = await spotify.get_playlist(playlist_id, sp_client=sp_user)
         except SpotifyAuthError:
-            pass  # Fall back to client credentials
+            pass  # Token invalid, fall back to client credentials
+        except Exception as e:
+            logger.warning("User-token playlist fetch failed for %s: %s", playlist_id, e)
 
     if data is None:
-        data = await spotify.get_playlist(playlist_id)
+        try:
+            data = await spotify.get_playlist(playlist_id)
+        except Exception as e:
+            logger.exception("Client-credentials playlist fetch failed for %s", playlist_id)
+            raise HTTPException(
+                status_code=502, detail=f"Failed to fetch playlist from Spotify: {e}"
+            ) from e
     if not data:
         raise HTTPException(status_code=404, detail="Playlist not found on Spotify")
 
