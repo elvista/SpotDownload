@@ -64,12 +64,15 @@ export default React.memo(function Layout({
                     Crate<span className="text-spotify-green">Digger</span>
                   </span>
                   <span className="text-[10px] uppercase tracking-wider text-spotify-light-gray/80 hidden sm:block">
-                    Spotify ID · Mixtapes · Genre ID
+                    Spotify ID · Mixtapes · Genre ID · Upscale
                   </span>
                 </div>
               </Link>
 
-              <nav className="flex items-center gap-1 sm:gap-2" aria-label="Main">
+              <nav
+                className="flex items-center gap-1 sm:gap-2 overflow-x-auto whitespace-nowrap min-w-0 -mx-1 px-1"
+                aria-label="Main"
+              >
                 <NavLink to="/" end className={navClass}>
                   Spotify ID
                 </NavLink>
@@ -78,6 +81,9 @@ export default React.memo(function Layout({
                 </NavLink>
                 <NavLink to="/genreid" className={navClass}>
                   Genre ID
+                </NavLink>
+                <NavLink to="/upscale" className={navClass}>
+                  Upscale
                 </NavLink>
               </nav>
             </div>

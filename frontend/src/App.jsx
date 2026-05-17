@@ -7,6 +7,7 @@ import { useHeaderContext } from './context/HeaderContext';
 const SpotDownloadView = lazy(() => import('./views/SpotDownloadView'));
 const MixtapeView = lazy(() => import('./views/MixtapeView'));
 const GenreIDView = lazy(() => import('./views/GenreIDView'));
+const UpscaleView = lazy(() => import('./views/UpscaleView'));
 
 function RouteFallback() {
   return (
@@ -57,6 +58,14 @@ export default function App() {
           element={
             <Suspense fallback={<RouteFallback />}>
               <GenreIDView />
+            </Suspense>
+          }
+        />
+        <Route
+          path="upscale"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <UpscaleView />
             </Suspense>
           }
         />
