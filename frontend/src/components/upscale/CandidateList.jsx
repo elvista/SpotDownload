@@ -6,7 +6,7 @@ import { SpinnerIcon, ErrorIcon } from '../Icons';
 
 const DEFAULT_LIMIT = 50;
 
-export default React.memo(function CandidateList({ refreshKey = 0 }) {
+export default React.memo(function CandidateList({ refreshKey = 0, onReplaced }) {
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
   const [threshold, setThreshold] = useState(null);
@@ -114,6 +114,7 @@ export default React.memo(function CandidateList({ refreshKey = 0 }) {
                     <MatchResultPanel
                       candidate={c}
                       onClose={() => handleToggle(c.id)}
+                      onReplaced={onReplaced}
                     />
                   </li>
                 )}

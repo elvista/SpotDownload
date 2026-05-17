@@ -48,6 +48,14 @@ export default React.memo(function ScanPanel({ onScanComplete, onOpenSettings })
     loadLastScan();
   }, [loadSettings, loadLastScan]);
 
+  // Refresh the cached library root + threshold when the Settings modal saves
+  // — otherwise the caption stays stale until the user navigates away and back.
+  useEffect(() => {
+    const onSaved = () => loadSettings();
+    window.addEventListener('upscale:settings-saved', onSaved);
+    return () => window.removeEventListener('upscale:settings-saved', onSaved);
+  }, [loadSettings]);
+
   const stream = useUpscaleScanStream(scanId);
   const isScanning = stream.phase === 'scanning';
 
