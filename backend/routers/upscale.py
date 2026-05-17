@@ -23,13 +23,18 @@ from sse_starlette.sse import EventSourceResponse
 
 from config import settings as app_config
 from database import get_db
-from models import AppSetting, LibraryFile, PoolCredential, ScanRun
+from models import AppSetting, LibraryFile, PoolCredential, ScanRun, UpscaleMatch
 
-# Import concrete scrapers so they register themselves on module load.
+# Import concrete scrapers so they register themselves on module load. The
+# orchestrator imports them too, but listing them here is cheap insurance
+# that ``GET /pools`` shows every pool regardless of import order.
 from services import (
     library_scanner,
     pool_base,
+    pool_bpmsupreme,  # noqa: F401
     pool_djcity,  # noqa: F401
+    pool_orchestrator,
+    pool_zipdj,  # noqa: F401
 )
 
 logger = logging.getLogger("cratedigger.upscale")
@@ -452,3 +457,147 @@ async def clear_pool_session(slug: str, db: Session = Depends(get_db)) -> None:
     pool_base.clear_pool_state(db, slug)
     # Also let the scraper drop any in-process state (no-op today, future-proofed).
     await scraper.clear_session()
+
+
+# --- Search via orchestrator (step 4) ----------------------------------------
+
+
+class SearchRequest(BaseModel):
+    library_file_id: int = Field(
+        ..., description="ID of a row in library_files to find replacements for."
+    )
+    limit: int = Field(default=25, ge=1, le=100)
+    query_override: str | None = Field(
+        default=None,
+        description="Optional explicit search string. Defaults to '{artist} {title}' from the library file's tags.",
+    )
+
+
+class TriedPoolResponse(BaseModel):
+    slug: str
+    hits_count: int
+    error: str
+
+
+class PoolHitResponse(BaseModel):
+    pool_slug: str
+    hit_id: str
+    title: str
+    artist: str
+    bitrate_kbps: int
+    format: str
+    duration_s: float | None
+    preview_url: str | None
+    upscale_match_id: int
+
+
+class SearchResponse(BaseModel):
+    """Shape consumed by the FE fallback chevron.
+
+    ``tried`` lists every pool the orchestrator queried, in priority order.
+    ``served_by`` is the slug of the pool whose hits are returned (empty
+    string when every pool failed or returned zero hits)."""
+
+    tried: list[TriedPoolResponse]
+    served_by: str
+    hits: list[PoolHitResponse]
+
+
+def _query_for_library_file(lf: LibraryFile, override: str | None) -> str:
+    if override and override.strip():
+        return override.strip()
+    parts = [lf.tag_artist or "", lf.tag_title or ""]
+    q = " ".join(p.strip() for p in parts if p and p.strip())
+    if q:
+        return q
+    # Fall back to filename stem if tags are empty — better than no query at all.
+    from pathlib import Path as _Path  # local import to keep top-of-file tidy
+
+    return _Path(lf.abs_path).stem
+
+
+@router.post("/search", response_model=SearchResponse)
+async def search_upscale(body: SearchRequest, db: Session = Depends(get_db)) -> SearchResponse:
+    """Run the pool fallback chain for a library file and persist hits.
+
+    Each returned hit is upserted as an ``upscale_matches`` row with
+    ``status='candidate'``. The router returns the row id alongside the
+    pool payload so the FE can directly call
+    ``/upscale/match/{id}/confirm`` (step 5) without a second lookup.
+    """
+    lf = db.query(LibraryFile).filter(LibraryFile.id == body.library_file_id).first()
+    if lf is None:
+        raise HTTPException(
+            status_code=404, detail=f"library_file_id {body.library_file_id} not found"
+        )
+
+    query = _query_for_library_file(lf, body.query_override)
+    if not query:
+        raise HTTPException(
+            status_code=400,
+            detail="library file has no tag_artist/tag_title and an empty filename; pass query_override",
+        )
+
+    result = await pool_orchestrator.search(db, query, limit=body.limit)
+
+    # Persist hits as candidate upscale_matches. Conflict on the unique
+    # (library_file_id, pool_slug, pool_hit_id) constraint is harmless —
+    # we want the existing row's id for the response.
+    hit_responses: list[PoolHitResponse] = []
+    if result.served_by and result.hits:
+        for hit in result.hits:
+            existing = (
+                db.query(UpscaleMatch)
+                .filter(
+                    UpscaleMatch.library_file_id == lf.id,
+                    UpscaleMatch.pool_slug == result.served_by,
+                    UpscaleMatch.pool_hit_id == hit.hit_id,
+                )
+                .first()
+            )
+            if existing is None:
+                row = UpscaleMatch(
+                    library_file_id=lf.id,
+                    pool_slug=result.served_by,
+                    pool_hit_id=hit.hit_id,
+                    pool_title=hit.title,
+                    pool_artist=hit.artist,
+                    pool_bitrate_kbps=hit.bitrate_kbps,
+                    pool_format=hit.format,
+                )
+                db.add(row)
+                db.flush()
+                match_id = row.id
+            else:
+                # Refresh fields in case the pool's metadata has changed since
+                # last query — but keep the row's status as-is so a previous
+                # confirm/reject doesn't get clobbered.
+                existing.pool_title = hit.title
+                existing.pool_artist = hit.artist
+                existing.pool_bitrate_kbps = hit.bitrate_kbps
+                existing.pool_format = hit.format
+                match_id = existing.id
+
+            hit_responses.append(
+                PoolHitResponse(
+                    pool_slug=result.served_by,
+                    hit_id=hit.hit_id,
+                    title=hit.title,
+                    artist=hit.artist,
+                    bitrate_kbps=hit.bitrate_kbps,
+                    format=hit.format,
+                    duration_s=hit.duration_s,
+                    preview_url=hit.preview_url,
+                    upscale_match_id=match_id,
+                )
+            )
+        db.commit()
+
+    return SearchResponse(
+        tried=[
+            TriedPoolResponse(slug=t.slug, hits_count=t.hits_count, error=t.error)
+            for t in result.tried
+        ],
+        served_by=result.served_by,
+        hits=hit_responses,
+    )
