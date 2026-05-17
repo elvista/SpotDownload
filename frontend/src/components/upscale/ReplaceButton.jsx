@@ -21,7 +21,7 @@ function basename(path) {
  *  - Other 409 (file locked, missing URL, not confirmed flow race) → plain red banner.
  *  - 5xx / network → generic red banner with err.message.
  */
-export default React.memo(function ReplaceButton({ match, libraryFileBasename, onReplaced }) {
+export default React.memo(function ReplaceButton({ match, libraryFileBasename, onReplaced, disabled = false }) {
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -68,13 +68,13 @@ export default React.memo(function ReplaceButton({ match, libraryFileBasename, o
   }, [match, onReplaced]);
 
   const handleClick = useCallback(() => {
-    if (busy || success) return;
+    if (busy || success || disabled) return;
     if (armed) {
       fire();
     } else {
       arm();
     }
-  }, [armed, busy, success, arm, fire]);
+  }, [armed, busy, success, disabled, arm, fire]);
 
   const fname = libraryFileBasename || basename(match?.library_file_path) || 'this file';
 
@@ -93,8 +93,9 @@ export default React.memo(function ReplaceButton({ match, libraryFileBasename, o
         <button
           type="button"
           onClick={handleClick}
-          disabled={busy}
+          disabled={busy || disabled}
           aria-pressed={armed}
+          title={disabled ? 'Confirm the match first' : undefined}
           className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 ${
             armed
               ? 'bg-red-500 hover:bg-red-600 text-white'
