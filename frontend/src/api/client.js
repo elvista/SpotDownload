@@ -11,7 +11,13 @@ async function request(path, options = {}) {
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: 'Request failed' }));
-    const err = new Error(error.detail || `HTTP ${res.status}`);
+    const detail = error.detail;
+    const message = typeof detail === 'string'
+      ? detail
+      : (detail && detail.message) || `HTTP ${res.status}`;
+    const err = new Error(message);
+    err.status = res.status;
+    err.detail = detail;
     if (res.status === 409 && error.playlist) err.existingPlaylist = error.playlist;
     throw err;
   }
@@ -96,4 +102,36 @@ export const api = {
   exportToLexicon: () => request('/genreid/export', { method: 'POST' }),
 
   clearStaged: () => request('/genreid/staged', { method: 'DELETE' }),
+
+  // Upscale
+  upscale: {
+    getPools: () => request('/upscale/pools'),
+    loginPool: (slug) => request(`/upscale/pools/${slug}/login`, { method: 'POST' }),
+    clearPool: (slug) => request(`/upscale/pools/${slug}`, { method: 'DELETE' }),
+
+    startScan: () => request('/upscale/scan', { method: 'POST' }),
+    getCandidates: ({ page = 1, pageSize = 50 } = {}) =>
+      request(`/upscale/candidates?page=${page}&page_size=${pageSize}`),
+
+    search: (libraryFileId) => request('/upscale/search', {
+      method: 'POST',
+      body: JSON.stringify({ library_file_id: libraryFileId }),
+    }),
+    confirmMatch: (id) => request(`/upscale/match/${id}/confirm`, { method: 'POST' }),
+    rejectMatch: (id) => request(`/upscale/match/${id}/reject`, { method: 'POST' }),
+    previewUrl: (id) => `/api/upscale/match/${id}/preview`,
+
+    replace: (matchId) => request('/upscale/replace', {
+      method: 'POST',
+      body: JSON.stringify({ match_id: matchId }),
+    }),
+
+    getReplaceLog: ({ page = 1, pageSize = 50, from, to, pool } = {}) => {
+      const qs = new URLSearchParams({ page, page_size: pageSize });
+      if (from) qs.set('from', from);
+      if (to) qs.set('to', to);
+      if (pool) qs.set('pool', pool);
+      return request(`/upscale/replace-log?${qs}`);
+    },
+  },
 };

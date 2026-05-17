@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Link, NavLink } from 'react-router-dom';
+import React, { useEffect, useRef, useState } from 'react';
+import { Link, NavLink, useLocation } from 'react-router-dom';
 import { api } from '../api/client';
 
 export default React.memo(function Layout({
@@ -9,6 +9,8 @@ export default React.memo(function Layout({
   showSettings = true,
 }) {
   const [spotifyConnected, setSpotifyConnected] = useState(false);
+  const navRef = useRef(null);
+  const { pathname } = useLocation();
 
   useEffect(() => {
     api.getAuthStatus().then((s) => setSpotifyConnected(s.connected)).catch(() => {});
@@ -17,6 +19,27 @@ export default React.memo(function Layout({
     }, 15000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    // Direct deep-links on narrow viewports can leave the active nav item off
+    // the right edge (the header row is wider than the viewport). Bring it in.
+    const nav = navRef.current;
+    const active = nav?.querySelector('[aria-current="page"]');
+    if (!nav || !active) return;
+    if (nav.scrollWidth > nav.clientWidth) {
+      // Use rects to get the active item's offset relative to the nav. The
+      // sticky <header> ancestor establishes a positioning context, so
+      // active.offsetLeft is header-relative, not nav-relative.
+      const navRect = nav.getBoundingClientRect();
+      const activeRect = active.getBoundingClientRect();
+      const offsetInNav = activeRect.left - navRect.left + nav.scrollLeft;
+      const target = offsetInNav - (nav.clientWidth - active.clientWidth) / 2;
+      nav.scrollLeft = Math.max(0, target);
+    } else {
+      active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+  }, [pathname]);
+
   const navClass = ({ isActive }) =>
     `text-sm font-medium px-3 py-1.5 rounded-lg transition-colors ${
       isActive ? 'bg-white/10 text-white' : 'text-spotify-light-gray hover:text-white hover:bg-white/5'
@@ -70,6 +93,7 @@ export default React.memo(function Layout({
               </Link>
 
               <nav
+                ref={navRef}
                 className="flex items-center gap-1 sm:gap-2 overflow-x-auto whitespace-nowrap min-w-0 -mx-1 px-1"
                 aria-label="Main"
               >
