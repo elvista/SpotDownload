@@ -118,9 +118,22 @@ export const api = {
     loginPool: (slug) => request(`/upscale/pools/${slug}/login`, { method: 'POST' }),
     clearPool: (slug) => request(`/upscale/pools/${slug}`, { method: 'DELETE' }),
 
-    startScan: () => request('/upscale/scan', { method: 'POST' }),
-    getCandidates: ({ page = 1, pageSize = 50 } = {}) =>
-      request(`/upscale/candidates?page=${page}&page_size=${pageSize}`),
+    startScan: ({ root, thresholdKbps } = {}) => {
+      const body = {};
+      if (root !== undefined) body.root = root;
+      if (thresholdKbps !== undefined) body.threshold_kbps = thresholdKbps;
+      return request('/upscale/scan', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+    },
+    getScan: (scanId) => request(`/upscale/scan/${scanId}`),
+    listScans: ({ limit = 20 } = {}) => request(`/upscale/scans?limit=${limit}`),
+    getCandidates: ({ limit = 50, offset = 0, thresholdKbps } = {}) => {
+      const qs = new URLSearchParams({ limit, offset });
+      if (thresholdKbps !== undefined) qs.set('threshold_kbps', thresholdKbps);
+      return request(`/upscale/candidates?${qs}`);
+    },
 
     search: (libraryFileId) => request('/upscale/search', {
       method: 'POST',

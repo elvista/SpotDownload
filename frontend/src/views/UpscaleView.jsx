@@ -1,4 +1,14 @@
+import { useCallback, useState } from 'react';
+import ScanPanel from '../components/upscale/ScanPanel';
+import CandidateList from '../components/upscale/CandidateList';
+
 export default function UpscaleView() {
+  const [candidatesRefreshKey, setCandidatesRefreshKey] = useState(0);
+
+  const handleScanComplete = useCallback(() => {
+    setCandidatesRefreshKey((k) => k + 1);
+  }, []);
+
   return (
     <div className="space-y-6">
       <header className="space-y-2">
@@ -10,22 +20,8 @@ export default function UpscaleView() {
         </p>
       </header>
 
-      <section
-        aria-labelledby="upscale-pools-heading"
-        className="rounded-xl border border-white/5 bg-spotify-dark-gray/60 p-6"
-      >
-        <h2
-          id="upscale-pools-heading"
-          className="text-xs uppercase tracking-wider text-spotify-light-gray/80 mb-3"
-        >
-          Pools
-        </h2>
-        <p className="text-sm text-spotify-light-gray">
-          Pool status will appear here once connected. Backend is being wired up — this
-          section will surface DJCity, zipDJ, and BPM Supreme connection state, plus the
-          scan, search, replace, and history workflow.
-        </p>
-      </section>
+      <ScanPanel onScanComplete={handleScanComplete} />
+      <CandidateList refreshKey={candidatesRefreshKey} />
     </div>
   );
 }
