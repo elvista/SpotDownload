@@ -931,3 +931,130 @@ def list_replace_log(
         limit=limit,
         offset=offset,
     )
+
+
+# --- Steps 7 + 8: session status + session-complete SSE ----------------------
+#
+# A "session" here is the current in-flight set of replacements: every
+# upscale_match that's been pulled out of `candidate` is part of it. The
+# session is "complete" when no `confirmed` rows remain (everything has
+# either been replaced or rejected) AND at least one replace landed —
+# that's the trigger the FE turns into the Rekordbox-rescan toast.
+#
+# Implementation note: we deliberately don't introduce a new `sessions`
+# table. Replace volume in Phase 2 is low (founder is hand-confirming one
+# track at a time) and the count queries are cheap. If batch flows arrive
+# in Phase 3 we can promote this to a real session row without changing
+# the contract.
+
+
+class SessionStatusResponse(BaseModel):
+    candidates: int  # upscale_matches with status='candidate'
+    confirmed: int  # status='confirmed' — pending replace
+    replaced: int  # status='replaced' — done
+    rejected: int  # status='rejected' — user said no
+    errors: int  # replace_logs rows with id3_copy_status in {'failed','partial'}
+    session_started_at: str | None  # earliest non-candidate transition
+    session_completed_at: str | None  # latest replaced_at, if a session has ended
+
+
+def _compute_session_status(db: Session) -> SessionStatusResponse:
+    from sqlalchemy import func
+
+    by_status = dict(
+        db.query(UpscaleMatch.status, func.count(UpscaleMatch.id))
+        .group_by(UpscaleMatch.status)
+        .all()
+    )
+    errors = (
+        db.query(func.count(ReplaceLog.id))
+        .filter(ReplaceLog.id3_copy_status.in_(["partial", "failed"]))
+        .scalar()
+        or 0
+    )
+    # Session timing: started_at is the earliest created_at of any row that
+    # has moved past `candidate`; completed_at is the latest replaced_at on
+    # the replace_logs side. Both null when no swap has happened.
+    started_at = (
+        db.query(func.min(UpscaleMatch.created_at))
+        .filter(UpscaleMatch.status != "candidate")
+        .scalar()
+    )
+    completed_at = db.query(func.max(ReplaceLog.replaced_at)).scalar()
+    confirmed = int(by_status.get("confirmed", 0))
+    replaced = int(by_status.get("replaced", 0))
+    # A "complete" session = no confirmed remaining AND at least one replace.
+    session_ended = confirmed == 0 and replaced > 0
+    return SessionStatusResponse(
+        candidates=int(by_status.get("candidate", 0)),
+        confirmed=confirmed,
+        replaced=replaced,
+        rejected=int(by_status.get("rejected", 0)),
+        errors=int(errors),
+        session_started_at=started_at.isoformat() if started_at else None,
+        session_completed_at=completed_at.isoformat() if session_ended and completed_at else None,
+    )
+
+
+@router.get("/session-status", response_model=SessionStatusResponse)
+def get_session_status(db: Session = Depends(get_db)) -> SessionStatusResponse:
+    """Cheap polling endpoint the FE hits to drive the section's progress bar.
+
+    See ``GET /session-complete`` for the push variant; this endpoint is the
+    fallback path when SSE isn't viable (e.g. dev tools, debugging).
+    """
+    return _compute_session_status(db)
+
+
+@router.get("/session-complete")
+async def stream_session_complete(
+    poll_interval_s: float = Query(default=2.0, ge=0.25, le=10.0),
+    db: Session = Depends(get_db),
+) -> EventSourceResponse:
+    """SSE that fires exactly one ``session_complete`` event the moment the
+    current session ends (no ``confirmed`` rows remain AND ``replaced > 0``),
+    then closes the stream.
+
+    The FE opens this once after the founder starts confirming matches; the
+    event triggers the Rekordbox-rescan toast.
+
+    Implementation: poll the same counts as ``/session-status`` every
+    ``poll_interval_s`` seconds. Cheap (a couple of integer GROUP-BY counts
+    against a small table) and avoids threading a separate event bus into
+    the swap engine.
+    """
+    # Capture the state we treat as the session's starting point: any
+    # replace landed before this stream opened is "previous session" and
+    # mustn't re-fire the toast. We watch for `replaced` *strictly
+    # increasing* past this baseline.
+    baseline = _compute_session_status(db)
+    baseline_replaced = baseline.replaced
+
+    async def gen() -> AsyncGenerator[dict[str, str], None]:
+        # Use a fresh SessionLocal per poll so we don't pin the dependency-
+        # injected request session for the lifetime of the stream.
+        from database import SessionLocal as _SessionLocal
+
+        while True:
+            await asyncio.sleep(poll_interval_s)
+            poll_db = _SessionLocal()
+            try:
+                status = _compute_session_status(poll_db)
+            finally:
+                poll_db.close()
+
+            if (
+                status.confirmed == 0
+                and status.replaced > baseline_replaced
+                and status.session_completed_at
+            ):
+                payload = {
+                    "type": "session_complete",
+                    "replaced": status.replaced - baseline_replaced,
+                    "session_started_at": status.session_started_at,
+                    "session_completed_at": status.session_completed_at,
+                }
+                yield {"event": "session_complete", "data": json.dumps(payload)}
+                break
+
+    return EventSourceResponse(gen())
