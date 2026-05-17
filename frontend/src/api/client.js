@@ -105,6 +105,15 @@ export const api = {
 
   // Upscale
   upscale: {
+    getSettings: () => request('/upscale/settings'),
+    updateSettings: ({ libraryRoot, thresholdKbps }) => request('/upscale/settings', {
+      method: 'PUT',
+      body: JSON.stringify({
+        library_root: libraryRoot,
+        threshold_kbps: thresholdKbps,
+      }),
+    }),
+
     getPools: () => request('/upscale/pools'),
     loginPool: (slug) => request(`/upscale/pools/${slug}/login`, { method: 'POST' }),
     clearPool: (slug) => request(`/upscale/pools/${slug}`, { method: 'DELETE' }),
