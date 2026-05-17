@@ -3,26 +3,24 @@
 import os
 from collections.abc import Generator
 
-import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-
-import models  # noqa: F401 - register models with Base
-
-# Import before app so we can create tables on test engine
-from database import Base, get_db
-
-# Set test DB before importing app (so scheduler uses test DB if it runs)
+# Set DATABASE_URL BEFORE any app import. ``database.py`` reads the value at
+# import time when it constructs the engine, so setting it any later would
+# leave ``SessionLocal`` bound to the dev DB and tests using the production
+# session factory would write to the wrong file.
 TEST_DB_URL = "sqlite:///./test_cratedigger.db"
 os.environ.setdefault("DATABASE_URL", TEST_DB_URL)
 
-from main import app  # noqa: E402
+import pytest  # noqa: E402, I001
+from sqlalchemy.orm import Session, sessionmaker  # noqa: E402, I001
+import models  # noqa: E402, F401, I001  - register models with Base
+from database import Base, engine as production_engine, get_db  # noqa: E402, I001
+from main import app  # noqa: E402, I001
 
-# Test engine and session (file-based so same DB for whole run)
-test_engine = create_engine(
-    TEST_DB_URL,
-    connect_args={"check_same_thread": False},
-)
+# Reuse the production engine — it's already bound to TEST_DB_URL because we
+# set DATABASE_URL above before any app import. Sharing one engine + pool
+# avoids "database is locked" errors when a test opens its own SessionLocal
+# while a fixture-owned connection still holds a SQLite write transaction.
+test_engine = production_engine
 TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
 
 

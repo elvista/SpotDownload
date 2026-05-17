@@ -262,12 +262,23 @@ def test_candidates_filtered_by_bitrate(client, db_session, tmp_path):
 
 
 @pytest.fixture(autouse=True)
-def _reset_upscale_settings(db_session):
-    """Ensure upscale settings rows don't bleed between tests."""
-    from models import AppSetting
+def _reset_upscale_settings(setup_test_db):
+    """Ensure upscale settings + library rows don't bleed between tests.
 
-    db_session.query(AppSetting).filter(
-        AppSetting.key.in_(["upscale_bitrate_threshold_kbps", "upscale_library_root"])
-    ).delete(synchronize_session=False)
-    db_session.commit()
+    Uses a short-lived ``SessionLocal`` (not the ``db_session`` fixture, which
+    holds an open transaction for the entire test and would deadlock against
+    the scanner's own fresh sessions on SQLite).
+    """
+    from models import AppSetting, LibraryFile, ScanRun
+
+    db = SessionLocal()
+    try:
+        db.query(AppSetting).filter(
+            AppSetting.key.in_(["upscale_bitrate_threshold_kbps", "upscale_library_root"])
+        ).delete(synchronize_session=False)
+        db.query(LibraryFile).delete(synchronize_session=False)
+        db.query(ScanRun).delete(synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
     yield

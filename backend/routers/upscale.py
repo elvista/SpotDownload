@@ -1,8 +1,9 @@
-"""Upscale section — REST + SSE for the library scanner (step 2).
+"""Upscale section — REST + SSE for scans, candidates, and pool integrations.
 
-Later PRs in this slice add pool scrapers, the A/B preview stream, the swap
-engine, and the post-session Rekordbox prompt. This file only exposes the
-scan + candidates surface today.
+Step 2 added the scan + candidates surface. Step 3 (this file) adds pool
+status, interactive login, and session-clear endpoints for the DJCity
+scraper; zipDJ + BPM Supreme arrive in step 4 with no router-side churn
+because both implement the same :class:`pool_base.PoolScraper` protocol.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -21,8 +23,14 @@ from sse_starlette.sse import EventSourceResponse
 
 from config import settings as app_config
 from database import get_db
-from models import AppSetting, LibraryFile, ScanRun
-from services import library_scanner
+from models import AppSetting, LibraryFile, PoolCredential, ScanRun
+
+# Import concrete scrapers so they register themselves on module load.
+from services import (
+    library_scanner,
+    pool_base,
+    pool_djcity,  # noqa: F401
+)
 
 logger = logging.getLogger("cratedigger.upscale")
 
@@ -315,3 +323,132 @@ def _scan_run_to_response(run: ScanRun) -> ScanRunResponse:
         candidates=run.candidates or 0,
         error=run.error or "",
     )
+
+
+# --- Pool endpoints (step 3) -------------------------------------------------
+
+
+class PoolStatusResponse(BaseModel):
+    slug: str
+    display_name: str
+    connected: bool
+    last_login: str | None
+    last_error: str
+    enabled: bool  # Feature-flag state, repeated per row for FE convenience.
+
+
+class PoolLoginAcceptedResponse(BaseModel):
+    slug: str
+    status: str = "started"
+    message: str
+
+
+@router.get("/pools", response_model=list[PoolStatusResponse])
+def list_pools(db: Session = Depends(get_db)) -> list[PoolStatusResponse]:
+    """Status row per registered pool scraper.
+
+    ``connected`` reflects whether a stored session blob exists in the DB
+    (the on-disk cache may have been wiped — we re-hydrate it on first
+    scrape from the encrypted blob).
+    """
+    enabled = pool_base.pools_enabled()
+    out: list[PoolStatusResponse] = []
+    for scraper in pool_base.all_scrapers():
+        row = db.query(PoolCredential).filter(PoolCredential.pool_slug == scraper.slug).first()
+        out.append(
+            PoolStatusResponse(
+                slug=scraper.slug,
+                display_name=scraper.display_name,
+                connected=bool(row and row.state_blob),
+                last_login=row.last_login.isoformat() if row and row.last_login else None,
+                last_error=(row.last_error or "") if row else "",
+                enabled=enabled,
+            )
+        )
+    return out
+
+
+@router.post("/pools/{slug}/login", response_model=PoolLoginAcceptedResponse)
+async def start_pool_login(slug: str, db: Session = Depends(get_db)) -> PoolLoginAcceptedResponse:
+    """Kick off the interactive login flow for ``slug`` in the background.
+
+    The actual Playwright window opens on whatever machine runs the
+    backend — for the founder's always-on install that is their own Mac.
+    We return immediately so the FE can show a "complete login in the
+    browser window that opened" prompt without blocking.
+    """
+    scraper = pool_base.get_scraper(slug)
+    if scraper is None:
+        raise HTTPException(status_code=404, detail=f"unknown pool: {slug}")
+    if not pool_base.pools_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Pool scraping is disabled. Set UPSCALE_POOLS_ENABLED=1 in your "
+                ".env and restart the backend, then try again."
+            ),
+        )
+
+    async def runner() -> None:
+        # Use a fresh session — we don't want to hold the request session for
+        # the duration of the interactive login (which can be minutes).
+        from database import SessionLocal
+
+        local_db = SessionLocal()
+        try:
+            await scraper.login_interactive()
+            # Mirror the freshly-written storage_state.json to the encrypted
+            # DB row so the session survives moves between machines.
+            state_path = pool_base.pool_state_file(scraper.slug)
+            if state_path.exists():
+                pool_base.write_pool_state(
+                    local_db, scraper.slug, state_path.read_text(encoding="utf-8")
+                )
+            else:
+                pool_base.record_pool_error(
+                    local_db, scraper.slug, "login completed but no storage state was written"
+                )
+        except Exception as e:  # noqa: BLE001 — log + mark, don't crash the worker
+            logger.exception("pool login failed: %s/%s", scraper.slug, e)
+            # Ensure a row exists so the FE can surface the error message.
+            row = (
+                local_db.query(PoolCredential)
+                .filter(PoolCredential.pool_slug == scraper.slug)
+                .first()
+            )
+            if row is None:
+                local_db.add(
+                    PoolCredential(
+                        pool_slug=scraper.slug,
+                        state_blob="",
+                        last_login=datetime.now(UTC),
+                        last_error=str(e)[:500],
+                    )
+                )
+            else:
+                row.last_error = str(e)[:500]
+            local_db.commit()
+        finally:
+            local_db.close()
+
+    asyncio.create_task(runner())
+    return PoolLoginAcceptedResponse(
+        slug=slug,
+        status="started",
+        message=(
+            "A login window will open on the server host. Complete the login there; "
+            "this endpoint returned immediately. Poll GET /api/upscale/pools to see "
+            "when the session is captured."
+        ),
+    )
+
+
+@router.delete("/pools/{slug}", status_code=204)
+async def clear_pool_session(slug: str, db: Session = Depends(get_db)) -> None:
+    """Wipe the stored session for ``slug`` (disk cache + DB row)."""
+    scraper = pool_base.get_scraper(slug)
+    if scraper is None:
+        raise HTTPException(status_code=404, detail=f"unknown pool: {slug}")
+    pool_base.clear_pool_state(db, slug)
+    # Also let the scraper drop any in-process state (no-op today, future-proofed).
+    await scraper.clear_session()
