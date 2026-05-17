@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../api/client';
 import { SpinnerIcon, CheckIcon, ErrorIcon, CloseIcon } from './Icons';
+import UpscaleSettingsSection from './upscale/UpscaleSettingsSection';
 
 export default React.memo(function SettingsModal({ isOpen, onClose }) {
   const [downloadPath, setDownloadPath] = useState('');
@@ -106,7 +107,7 @@ export default React.memo(function SettingsModal({ isOpen, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-spotify-dark-gray rounded-2xl shadow-2xl w-full max-w-lg mx-4 animate-fade-in">
+      <div className="relative bg-spotify-dark-gray rounded-2xl shadow-2xl w-full max-w-lg mx-4 animate-fade-in flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-white/5">
           <div className="flex items-center gap-3">
@@ -124,7 +125,7 @@ export default React.memo(function SettingsModal({ isOpen, onClose }) {
         </div>
 
         {/* Body */}
-        <div className="p-6 space-y-6">
+        <div className="p-6 space-y-6 overflow-y-auto flex-1 min-h-0">
           <div className="p-3 rounded-xl bg-spotify-mid-gray/40 border border-white/10">
             <p className="text-xs text-spotify-light-gray leading-relaxed">
               Downloads use YouTube to find audio for each track; Spotify supplies playlist data and tags only. Matches
@@ -233,6 +234,8 @@ export default React.memo(function SettingsModal({ isOpen, onClose }) {
               <p className="text-sm text-red-300">{error}</p>
             </div>
           )}
+
+          <UpscaleSettingsSection isOpen={isOpen} />
         </div>
 
         {/* Footer */}

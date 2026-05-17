@@ -118,6 +118,38 @@ describe('api client', () => {
       expect(api.upscale.previewUrl(3)).toBe('/api/upscale/match/3/preview');
     });
 
+    it('getSettings hits /upscale/settings', async () => {
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ library_root: '/music', threshold_kbps: 192 }),
+      });
+      const result = await api.upscale.getSettings();
+      expect(result).toEqual({ library_root: '/music', threshold_kbps: 192 });
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/upscale/settings'),
+        expect.any(Object),
+      );
+    });
+
+    it('updateSettings PUTs snake_case payload', async () => {
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ library_root: '/library', threshold_kbps: 256 }),
+      });
+      await api.upscale.updateSettings({ libraryRoot: '/library', thresholdKbps: 256 });
+      const [, opts] = global.fetch.mock.calls[0];
+      expect(opts.method).toBe('PUT');
+      expect(JSON.parse(opts.body)).toEqual({ library_root: '/library', threshold_kbps: 256 });
+    });
+
+    it('clearPool DELETEs the slug-scoped endpoint', async () => {
+      global.fetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) });
+      await api.upscale.clearPool('djcity');
+      const [url, opts] = global.fetch.mock.calls[0];
+      expect(url).toContain('/upscale/pools/djcity');
+      expect(opts.method).toBe('DELETE');
+    });
+
     it('getReplaceLog passes filters as query params', async () => {
       global.fetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) });
       await api.upscale.getReplaceLog({
