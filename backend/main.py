@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import settings as app_config
 from database import SessionLocal, init_db
-from routers import auth, downloads, export_import, genreid, mixtape, monitor, playlists
+from routers import auth, downloads, export_import, genreid, mixtape, monitor, playlists, upscale
 from routers import settings as settings_router
 from services.monitor import MonitorService
 
@@ -92,6 +92,7 @@ app.include_router(export_import.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(mixtape.router, prefix="/api")
 app.include_router(genreid.router, prefix="/api")
+app.include_router(upscale.router, prefix="/api")
 
 
 @app.get("/api/health")
