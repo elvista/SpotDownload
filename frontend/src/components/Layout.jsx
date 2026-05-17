@@ -26,11 +26,14 @@ export default React.memo(function Layout({
     const nav = navRef.current;
     const active = nav?.querySelector('[aria-current="page"]');
     if (!nav || !active) return;
-    // If the nav itself horizontally scrolls (constrained parent), center the
-    // active item inside it. Otherwise fall back to a document-level
-    // scrollIntoView, which scrolls the window if the page overflows.
     if (nav.scrollWidth > nav.clientWidth) {
-      const target = active.offsetLeft - (nav.clientWidth - active.clientWidth) / 2;
+      // Use rects to get the active item's offset relative to the nav. The
+      // sticky <header> ancestor establishes a positioning context, so
+      // active.offsetLeft is header-relative, not nav-relative.
+      const navRect = nav.getBoundingClientRect();
+      const activeRect = active.getBoundingClientRect();
+      const offsetInNav = activeRect.left - navRect.left + nav.scrollLeft;
+      const target = offsetInNav - (nav.clientWidth - active.clientWidth) / 2;
       nav.scrollLeft = Math.max(0, target);
     } else {
       active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
