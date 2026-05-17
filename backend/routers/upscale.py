@@ -23,7 +23,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from config import settings as app_config
 from database import get_db
-from models import AppSetting, LibraryFile, PoolCredential, ScanRun, UpscaleMatch
+from models import AppSetting, LibraryFile, PoolCredential, ReplaceLog, ScanRun, UpscaleMatch
 
 # Import concrete scrapers so they register themselves on module load. The
 # orchestrator imports them too, but listing them here is cheap insurance
@@ -35,6 +35,7 @@ from services import (
     pool_djcity,  # noqa: F401
     pool_orchestrator,
     pool_zipdj,  # noqa: F401
+    swap_engine,
 )
 
 logger = logging.getLogger("cratedigger.upscale")
@@ -766,3 +767,167 @@ def stream_match_original(match_id: int, db: Session = Depends(get_db)):
         )
     media_type = "audio/mpeg" if p.suffix.lower() == ".mp3" else "application/octet-stream"
     return FileResponse(str(p), media_type=media_type, filename=p.name)
+
+
+# --- Step 6: atomic swap + Replace Log ---------------------------------------
+
+
+class ReplaceResponse(BaseModel):
+    status: str  # 'replaced'
+    replace_log_id: int
+    abs_path: str
+    archive_path: str
+    file_size_before: int
+    file_size_after: int
+    replaced_at: str
+    id3_copy_status: str
+
+
+class ReplaceLogResponse(BaseModel):
+    id: int
+    library_file_id: int | None
+    upscale_match_id: int | None
+    abs_path: str
+    archive_path: str
+    old_bitrate_kbps: int
+    new_bitrate_kbps: int
+    pool_slug: str
+    pool_source_url: str
+    file_size_before: int
+    file_size_after: int
+    id3_copy_status: str
+    replaced_at: str | None
+
+
+class ReplaceLogPage(BaseModel):
+    items: list[ReplaceLogResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+def _row_to_log_response(r: ReplaceLog) -> ReplaceLogResponse:
+    return ReplaceLogResponse(
+        id=r.id,
+        library_file_id=r.library_file_id,
+        upscale_match_id=r.upscale_match_id,
+        abs_path=r.abs_path,
+        archive_path=r.archive_path,
+        old_bitrate_kbps=r.old_bitrate_kbps or 0,
+        new_bitrate_kbps=r.new_bitrate_kbps or 0,
+        pool_slug=r.pool_slug or "",
+        pool_source_url=r.pool_source_url or "",
+        file_size_before=r.file_size_before or 0,
+        file_size_after=r.file_size_after or 0,
+        id3_copy_status=r.id3_copy_status or "",
+        replaced_at=r.replaced_at.isoformat() if r.replaced_at else None,
+    )
+
+
+def _httpx_download_factory(source_url: str):
+    """Return a sync ``(dest_path) -> bytes_written`` callable.
+
+    Used by the swap engine to fetch the pool file. Sync because the swap
+    engine runs the downloader via ``asyncio.to_thread``; using requests via
+    httpx's sync API keeps the code readable and avoids nested event loops.
+    """
+    import httpx
+
+    def download(dest_path):
+        with httpx.Client(follow_redirects=True, timeout=120.0) as client:
+            with client.stream("GET", source_url) as r:
+                if r.status_code >= 400:
+                    raise RuntimeError(f"pool returned HTTP {r.status_code}")
+                written = 0
+                with open(dest_path, "wb") as fh:
+                    for chunk in r.iter_bytes(chunk_size=64 * 1024):
+                        fh.write(chunk)
+                        written += len(chunk)
+        return written
+
+    return download
+
+
+@router.post("/match/{match_id}/replace", response_model=ReplaceResponse)
+async def replace_match(match_id: int, db: Session = Depends(get_db)) -> ReplaceResponse:
+    """Atomically swap the library file with the confirmed pool hit.
+
+    Requires the match to be in ``confirmed`` state — anything else returns
+    409. The path on disk is preserved, so Rekordbox-side state (cue points,
+    beatgrids, loops) survives by virtue of how Rekordbox keys library
+    entries.
+    """
+    m = _load_match_or_404(db, match_id)
+    if (m.status or "") == "replaced":
+        raise HTTPException(status_code=409, detail=f"match {match_id} is already replaced")
+    if (m.status or "") != "confirmed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"match {match_id} is '{m.status}', must be 'confirmed' before /replace",
+        )
+    if not m.pool_preview_url:
+        # In Phase 1/2 we use the preview URL as the download source. Full-
+        # quality download URLs require the per-pool authenticated download
+        # path, which the scrapers stub today. The FE can pre-populate this
+        # via a fresh search if needed.
+        raise HTTPException(
+            status_code=409,
+            detail="match has no pool URL stored; re-run /search to refresh",
+        )
+
+    download = _httpx_download_factory(m.pool_preview_url)
+
+    try:
+        result = await swap_engine.replace(db, m, download_to_temp=download)
+    except swap_engine.MatchNotConfirmedError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except swap_engine.FileLockedError as e:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"target file is locked — close it in any other app (Rekordbox, "
+                f"iTunes, players) and retry. Details: {e}"
+            ),
+        ) from e
+    except swap_engine.DownloadFailedError as e:
+        raise HTTPException(status_code=502, detail=f"pool download failed: {e}") from e
+    except swap_engine.SwapFailedError as e:
+        logger.exception("swap_engine: unexpected failure on match %s", match_id)
+        raise HTTPException(status_code=500, detail=f"swap failed: {e}") from e
+
+    return ReplaceResponse(
+        status="replaced",
+        replace_log_id=result.replace_log_id,
+        abs_path=result.abs_path,
+        archive_path=result.archive_path,
+        file_size_before=result.file_size_before,
+        file_size_after=result.file_size_after,
+        replaced_at=result.replaced_at.isoformat(),
+        id3_copy_status=result.id3_copy_status,
+    )
+
+
+@router.get("/replace-log", response_model=ReplaceLogPage)
+def list_replace_log(
+    library_file_id: int | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+) -> ReplaceLogPage:
+    """Paginated Replace Log, newest first. Optional ``library_file_id`` filter."""
+    q = db.query(ReplaceLog)
+    if library_file_id is not None:
+        q = q.filter(ReplaceLog.library_file_id == library_file_id)
+    total = q.count()
+    rows = (
+        q.order_by(ReplaceLog.replaced_at.desc(), ReplaceLog.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return ReplaceLogPage(
+        items=[_row_to_log_response(r) for r in rows],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )

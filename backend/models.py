@@ -153,6 +153,8 @@ class ReplaceLog(Base):
     new_sha256 = Column(String, nullable=False)
     pool_slug = Column(String, nullable=False)
     pool_source_url = Column(String, default="")
+    file_size_before = Column(BigInteger, default=0)  # bytes; 0 if unknown
+    file_size_after = Column(BigInteger, default=0)
     id3_copy_status = Column(String, default="ok")  # 'ok' | 'partial' | 'failed'
     replaced_at = Column(DateTime, default=lambda: datetime.now(UTC), index=True)
 
