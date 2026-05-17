@@ -125,6 +125,7 @@ class UpscaleMatch(Base):
     pool_artist = Column(String, nullable=False)
     pool_bitrate_kbps = Column(Integer, nullable=False)
     pool_format = Column(String, nullable=False)
+    pool_preview_url = Column(String, default="")  # cached so /preview can stream without re-search
     confidence = Column(Float)  # populated by AI slice; null in Phase 1
     status = Column(String, default="candidate")  # candidate|confirmed|rejected|replaced
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
