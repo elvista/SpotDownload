@@ -564,6 +564,7 @@ async def search_upscale(body: SearchRequest, db: Session = Depends(get_db)) -> 
                     pool_artist=hit.artist,
                     pool_bitrate_kbps=hit.bitrate_kbps,
                     pool_format=hit.format,
+                    pool_preview_url=hit.preview_url or "",
                 )
                 db.add(row)
                 db.flush()
@@ -576,6 +577,7 @@ async def search_upscale(body: SearchRequest, db: Session = Depends(get_db)) -> 
                 existing.pool_artist = hit.artist
                 existing.pool_bitrate_kbps = hit.bitrate_kbps
                 existing.pool_format = hit.format
+                existing.pool_preview_url = hit.preview_url or existing.pool_preview_url or ""
                 match_id = existing.id
 
             hit_responses.append(
@@ -601,3 +603,166 @@ async def search_upscale(body: SearchRequest, db: Session = Depends(get_db)) -> 
         served_by=result.served_by,
         hits=hit_responses,
     )
+
+
+# --- Match confirm/reject + A/B preview streaming (step 5) -------------------
+
+
+_VALID_STATUSES = {"candidate", "confirmed", "rejected", "replaced"}
+
+# Final statuses after a swap has landed — block re-confirming or flipping back.
+_TERMINAL_STATUSES = {"replaced"}
+
+
+class MatchResponse(BaseModel):
+    id: int
+    library_file_id: int
+    pool_slug: str
+    pool_hit_id: str
+    pool_title: str
+    pool_artist: str
+    pool_bitrate_kbps: int
+    pool_format: str
+    pool_preview_url: str
+    confidence: float | None
+    status: str
+    created_at: str | None
+
+
+def _match_to_response(m: UpscaleMatch) -> MatchResponse:
+    return MatchResponse(
+        id=m.id,
+        library_file_id=m.library_file_id,
+        pool_slug=m.pool_slug,
+        pool_hit_id=m.pool_hit_id,
+        pool_title=m.pool_title,
+        pool_artist=m.pool_artist,
+        pool_bitrate_kbps=m.pool_bitrate_kbps,
+        pool_format=m.pool_format,
+        pool_preview_url=m.pool_preview_url or "",
+        confidence=m.confidence,
+        status=m.status or "candidate",
+        created_at=m.created_at.isoformat() if m.created_at else None,
+    )
+
+
+def _load_match_or_404(db: Session, match_id: int) -> UpscaleMatch:
+    m = db.query(UpscaleMatch).filter(UpscaleMatch.id == match_id).first()
+    if m is None:
+        raise HTTPException(status_code=404, detail=f"upscale_match {match_id} not found")
+    return m
+
+
+def _guard_not_terminal(m: UpscaleMatch) -> None:
+    if (m.status or "") in _TERMINAL_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"match {m.id} is already in terminal status '{m.status}' and cannot be changed",
+        )
+
+
+@router.get("/match/{match_id}", response_model=MatchResponse)
+def get_match(match_id: int, db: Session = Depends(get_db)) -> MatchResponse:
+    return _match_to_response(_load_match_or_404(db, match_id))
+
+
+@router.post("/match/{match_id}/confirm", response_model=MatchResponse)
+def confirm_match(match_id: int, db: Session = Depends(get_db)) -> MatchResponse:
+    """Mark a candidate hit as confirmed by the founder.
+
+    Any *other* candidate matches on the same library file are auto-rejected so
+    only one match is in `confirmed` state per library file at a time. That
+    keeps the swap engine (step 6) unambiguous about which hit to replace with.
+    """
+    m = _load_match_or_404(db, match_id)
+    _guard_not_terminal(m)
+    db.query(UpscaleMatch).filter(
+        UpscaleMatch.library_file_id == m.library_file_id,
+        UpscaleMatch.id != m.id,
+        UpscaleMatch.status == "confirmed",
+    ).update({UpscaleMatch.status: "rejected"}, synchronize_session=False)
+    m.status = "confirmed"
+    db.commit()
+    db.refresh(m)
+    return _match_to_response(m)
+
+
+@router.post("/match/{match_id}/reject", response_model=MatchResponse)
+def reject_match(match_id: int, db: Session = Depends(get_db)) -> MatchResponse:
+    m = _load_match_or_404(db, match_id)
+    _guard_not_terminal(m)
+    m.status = "rejected"
+    db.commit()
+    db.refresh(m)
+    return _match_to_response(m)
+
+
+@router.get("/match/{match_id}/preview")
+async def stream_match_preview(match_id: int, db: Session = Depends(get_db)):
+    """Proxy-stream the pool's preview audio so the FE A/B player can play
+    it inline without dealing with CORS or pool auth cookies.
+
+    Streams chunked from the pool host; ``Content-Type`` is forwarded. If the
+    pool needs cookies, those would have to be threaded through here later
+    (out of scope for step 5 — current pools allow unauthenticated previews).
+    """
+    m = _load_match_or_404(db, match_id)
+    if not m.pool_preview_url:
+        raise HTTPException(status_code=404, detail="no preview_url stored for this match")
+
+    # Lazy import so the test suite doesn't need httpx running unless this
+    # endpoint is exercised.
+    import httpx
+    from fastapi.responses import StreamingResponse
+
+    client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+
+    try:
+        response = await client.send(client.build_request("GET", m.pool_preview_url), stream=True)
+    except httpx.HTTPError as e:
+        await client.aclose()
+        raise HTTPException(status_code=502, detail=f"pool preview fetch failed: {e}") from e
+
+    if response.status_code >= 400:
+        status = response.status_code
+        await response.aclose()
+        await client.aclose()
+        raise HTTPException(
+            status_code=502,
+            detail=f"pool preview returned HTTP {status}",
+        )
+
+    media_type = response.headers.get("content-type", "audio/mpeg")
+
+    async def stream_bytes():
+        try:
+            async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
+                yield chunk
+        finally:
+            await response.aclose()
+            await client.aclose()
+
+    return StreamingResponse(stream_bytes(), media_type=media_type)
+
+
+@router.get("/match/{match_id}/preview-original")
+def stream_match_original(match_id: int, db: Session = Depends(get_db)):
+    """Stream the local low-bitrate library file so the FE can A/B against the
+    pool preview. Pairs with /preview above.
+    """
+    from fastapi.responses import FileResponse
+
+    m = _load_match_or_404(db, match_id)
+    lf = db.query(LibraryFile).filter(LibraryFile.id == m.library_file_id).first()
+    if lf is None:
+        raise HTTPException(
+            status_code=410,
+            detail=f"library_file {m.library_file_id} for match {match_id} has been purged",
+        )
+    p = Path(lf.abs_path)
+    if not p.exists() or not p.is_file():
+        raise HTTPException(
+            status_code=410, detail=f"library file no longer present on disk: {lf.abs_path}"
+        )
+    media_type = "audio/mpeg" if p.suffix.lower() == ".mp3" else "application/octet-stream"
+    return FileResponse(str(p), media_type=media_type, filename=p.name)
