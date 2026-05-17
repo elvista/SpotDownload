@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import ScanPanel from '../components/upscale/ScanPanel';
 import CandidateList from '../components/upscale/CandidateList';
 import ReplaceLogTable from '../components/upscale/ReplaceLogTable';
+import RekordboxRescanToast from '../components/upscale/RekordboxRescanToast';
 
 export default function UpscaleView() {
   const [candidatesRefreshKey, setCandidatesRefreshKey] = useState(0);
@@ -35,6 +36,7 @@ export default function UpscaleView() {
         onReplaced={handleReplaced}
       />
       <ReplaceLogTable refreshKey={logRefreshKey} />
+      <RekordboxRescanToast />
     </div>
   );
 }
