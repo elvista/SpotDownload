@@ -139,6 +139,9 @@ export default React.memo(function UpscaleSettingsSection({ isOpen }) {
       setLibraryRoot(updated.library_root);
       setThresholdKbps(updated.threshold_kbps);
       setSaved(true);
+      // Let other Upscale surfaces (ScanPanel's "at or below X kbps" caption,
+      // CandidateList's threshold readout) refresh without a full reload.
+      window.dispatchEvent(new CustomEvent('upscale:settings-saved', { detail: updated }));
       savedTimerRef.current = setTimeout(() => setSaved(false), 2000);
     } catch (err) {
       setError(err.message);

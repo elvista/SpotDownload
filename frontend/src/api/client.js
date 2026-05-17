@@ -139,20 +139,17 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ library_file_id: libraryFileId }),
     }),
+    getMatch: (id) => request(`/upscale/match/${id}`),
     confirmMatch: (id) => request(`/upscale/match/${id}/confirm`, { method: 'POST' }),
     rejectMatch: (id) => request(`/upscale/match/${id}/reject`, { method: 'POST' }),
     previewUrl: (id) => `/api/upscale/match/${id}/preview`,
+    previewOriginalUrl: (id) => `/api/upscale/match/${id}/preview-original`,
 
-    replace: (matchId) => request('/upscale/replace', {
-      method: 'POST',
-      body: JSON.stringify({ match_id: matchId }),
-    }),
+    replaceMatch: (matchId) => request(`/upscale/match/${matchId}/replace`, { method: 'POST' }),
 
-    getReplaceLog: ({ page = 1, pageSize = 50, from, to, pool } = {}) => {
-      const qs = new URLSearchParams({ page, page_size: pageSize });
-      if (from) qs.set('from', from);
-      if (to) qs.set('to', to);
-      if (pool) qs.set('pool', pool);
+    getReplaceLog: ({ limit = 50, offset = 0, libraryFileId } = {}) => {
+      const qs = new URLSearchParams({ limit, offset });
+      if (libraryFileId !== undefined) qs.set('library_file_id', libraryFileId);
       return request(`/upscale/replace-log?${qs}`);
     },
   },

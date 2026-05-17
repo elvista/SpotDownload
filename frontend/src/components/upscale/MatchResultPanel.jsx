@@ -1,17 +1,21 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../api/client';
 import { SpinnerIcon, ErrorIcon } from '../Icons';
+import ReplaceButton from './ReplaceButton';
 
-function PoolHit({ hit }) {
+function PoolHit({ hit, libraryFileBasename, onReplaced }) {
+  // The search response embeds `upscale_match_id`; we synthesise the rest of
+  // the shape ReplaceButton needs (it only reads `id`).
+  const match = { id: hit.upscale_match_id, status: 'candidate' };
   return (
-    <li className="rounded-lg border border-white/10 bg-spotify-mid-gray/30 p-3 flex flex-col gap-1">
+    <li className="rounded-lg border border-white/10 bg-spotify-mid-gray/30 p-3 flex flex-col gap-2">
       <p className="text-sm text-white font-medium truncate" title={hit.title}>
         {hit.title || <em className="text-spotify-light-gray italic">Untitled</em>}
       </p>
       <p className="text-xs text-spotify-light-gray truncate" title={hit.artist}>
         {hit.artist || '—'}
       </p>
-      <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-spotify-light-gray/80 mt-1">
+      <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-spotify-light-gray/80">
         <span className="px-1.5 py-0.5 rounded bg-spotify-green/20 text-spotify-green font-semibold">
           {hit.bitrate_kbps} kbps
         </span>
@@ -20,15 +24,12 @@ function PoolHit({ hit }) {
           <span>{Math.round(hit.duration_s)}s</span>
         ) : null}
       </div>
-      <div className="flex justify-end pt-2">
-        <button
-          type="button"
-          disabled
-          title="Replace lands in the next step — preview + swap arrive in step 6."
-          className="px-3 py-1 text-xs bg-spotify-mid-gray text-spotify-light-gray rounded-md cursor-not-allowed"
-        >
-          Replace…
-        </button>
+      <div className="pt-1">
+        <ReplaceButton
+          match={match}
+          libraryFileBasename={libraryFileBasename}
+          onReplaced={onReplaced}
+        />
       </div>
     </li>
   );
@@ -53,7 +54,13 @@ function TriedRow({ row, servedBy }) {
   );
 }
 
-export default React.memo(function MatchResultPanel({ candidate, onClose }) {
+function basename(path) {
+  if (!path) return '';
+  const ix = path.lastIndexOf('/');
+  return ix >= 0 ? path.slice(ix + 1) : path;
+}
+
+export default React.memo(function MatchResultPanel({ candidate, onClose, onReplaced }) {
   const [state, setState] = useState({ loading: true, result: null, error: null });
 
   const search = useCallback(async () => {
@@ -139,7 +146,12 @@ export default React.memo(function MatchResultPanel({ candidate, onClose }) {
       ) : (
         <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
           {hits.map((h) => (
-            <PoolHit key={h.upscale_match_id} hit={h} />
+            <PoolHit
+              key={h.upscale_match_id}
+              hit={h}
+              libraryFileBasename={basename(candidate.abs_path)}
+              onReplaced={onReplaced}
+            />
           ))}
         </ul>
       )}

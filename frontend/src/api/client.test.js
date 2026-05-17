@@ -64,7 +64,7 @@ describe('api client', () => {
       }),
     });
     try {
-      await api.upscale.replace(42);
+      await api.upscale.replaceMatch(42);
       throw new Error('should not reach');
     } catch (e) {
       expect(e.status).toBe(409);
@@ -106,18 +106,6 @@ describe('api client', () => {
       expect(JSON.parse(opts.body)).toEqual({ library_file_id: 17 });
     });
 
-    it('replace posts match_id', async () => {
-      global.fetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ok: true }) });
-      await api.upscale.replace(99);
-      const [, opts] = global.fetch.mock.calls[0];
-      expect(opts.method).toBe('POST');
-      expect(JSON.parse(opts.body)).toEqual({ match_id: 99 });
-    });
-
-    it('previewUrl returns the streaming endpoint for <audio src>', () => {
-      expect(api.upscale.previewUrl(3)).toBe('/api/upscale/match/3/preview');
-    });
-
     it('getSettings hits /upscale/settings', async () => {
       global.fetch.mockResolvedValueOnce({
         ok: true,
@@ -142,6 +130,37 @@ describe('api client', () => {
       expect(JSON.parse(opts.body)).toEqual({ library_root: '/library', threshold_kbps: 256 });
     });
 
+    it('replaceMatch POSTs to /upscale/match/:id/replace', async () => {
+      global.fetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) });
+      await api.upscale.replaceMatch(42);
+      const [url, opts] = global.fetch.mock.calls[0];
+      expect(url).toContain('/upscale/match/42/replace');
+      expect(opts.method).toBe('POST');
+    });
+
+    it('confirmMatch + getMatch hit the right endpoints', async () => {
+      global.fetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) });
+      await api.upscale.confirmMatch(7);
+      expect(global.fetch.mock.calls[0][0]).toContain('/upscale/match/7/confirm');
+      global.fetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) });
+      await api.upscale.getMatch(7);
+      expect(global.fetch.mock.calls[1][0]).toContain('/upscale/match/7');
+    });
+
+    it('getReplaceLog uses limit + offset and optional library_file_id', async () => {
+      global.fetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ items: [], total: 0 }) });
+      await api.upscale.getReplaceLog({ limit: 25, offset: 50, libraryFileId: 11 });
+      const url = global.fetch.mock.calls[0][0];
+      expect(url).toContain('limit=25');
+      expect(url).toContain('offset=50');
+      expect(url).toContain('library_file_id=11');
+    });
+
+    it('previewOriginalUrl + previewUrl return streaming endpoints', () => {
+      expect(api.upscale.previewUrl(3)).toBe('/api/upscale/match/3/preview');
+      expect(api.upscale.previewOriginalUrl(3)).toBe('/api/upscale/match/3/preview-original');
+    });
+
     it('clearPool DELETEs the slug-scoped endpoint', async () => {
       global.fetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) });
       await api.upscale.clearPool('djcity');
@@ -150,19 +169,5 @@ describe('api client', () => {
       expect(opts.method).toBe('DELETE');
     });
 
-    it('getReplaceLog passes filters as query params', async () => {
-      global.fetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) });
-      await api.upscale.getReplaceLog({
-        page: 2,
-        pageSize: 25,
-        from: '2026-01-01',
-        pool: 'bpm',
-      });
-      const [url] = global.fetch.mock.calls[0];
-      expect(url).toContain('page=2');
-      expect(url).toContain('page_size=25');
-      expect(url).toContain('from=2026-01-01');
-      expect(url).toContain('pool=bpm');
-    });
   });
 });

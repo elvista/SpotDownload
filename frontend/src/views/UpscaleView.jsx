@@ -1,12 +1,21 @@
 import { useCallback, useState } from 'react';
 import ScanPanel from '../components/upscale/ScanPanel';
 import CandidateList from '../components/upscale/CandidateList';
+import ReplaceLogTable from '../components/upscale/ReplaceLogTable';
 
 export default function UpscaleView() {
   const [candidatesRefreshKey, setCandidatesRefreshKey] = useState(0);
+  const [logRefreshKey, setLogRefreshKey] = useState(0);
 
   const handleScanComplete = useCallback(() => {
     setCandidatesRefreshKey((k) => k + 1);
+  }, []);
+
+  // Each successful Replace shrinks the candidate set (the swapped file is now
+  // above threshold) and appends a row to the Replace Log; refresh both.
+  const handleReplaced = useCallback(() => {
+    setCandidatesRefreshKey((k) => k + 1);
+    setLogRefreshKey((k) => k + 1);
   }, []);
 
   return (
@@ -21,7 +30,11 @@ export default function UpscaleView() {
       </header>
 
       <ScanPanel onScanComplete={handleScanComplete} />
-      <CandidateList refreshKey={candidatesRefreshKey} />
+      <CandidateList
+        refreshKey={candidatesRefreshKey}
+        onReplaced={handleReplaced}
+      />
+      <ReplaceLogTable refreshKey={logRefreshKey} />
     </div>
   );
 }
