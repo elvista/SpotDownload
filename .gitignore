@@ -72,3 +72,5 @@ bun.lockb
 # Backups
 *.bak
 *.backup
+backend/cratedigger.db-wal
+backend/cratedigger.db-shm
