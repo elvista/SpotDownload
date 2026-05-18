@@ -108,6 +108,7 @@ There is **no automatic verification** that the downloaded audio is the same rec
 - **Python 3.11+**
 - **Node.js 18+**
 - **yt-dlp** and **ffmpeg** on `PATH` (downloads and Mixtape audio processing). Example: `brew install yt-dlp ffmpeg` (macOS).
+- **Chromaprint** (`fpcalc` on `PATH`) for the Upscale section's wrong-track guard. macOS: `brew install chromaprint`. Linux: `apt-get install libchromaprint-tools`. Without it the Phase 3 batch queue can't compute the fingerprint similarity gate and Replace will refuse the swap rather than degrade silently.
 
 ## Troubleshooting
 
@@ -120,6 +121,7 @@ There is **no automatic verification** that the downloaded audio is the same rec
 | **Genre ID "database not found"** | Open Genre ID, set the correct Lexicon DB path (default: `~/Library/Application Support/Lexicon/main.db`). |
 | **Genre ID returns no suggestions** | Check `LASTFM_API_KEY` in `.env`. |
 | **DB migrations** | `cd backend && alembic upgrade head` |
+| **Upscale: "fpcalc not found"** | Install Chromaprint: `brew install chromaprint` (macOS) or `apt-get install libchromaprint-tools` (Linux). Restart the backend. |
 
 ## Docs
 
