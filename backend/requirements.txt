@@ -32,3 +32,12 @@ cryptography
 # once to fetch the browser binary. Pool scraping is gated by the env var
 # UPSCALE_POOLS_ENABLED=1 so a fresh install with no browser still boots.
 playwright
+
+# Upscale section — AI slice (track identity & confidence)
+# rapidfuzz: title/artist similarity scoring (token_set_ratio / token_sort_ratio)
+# pyacoustid: thin wrapper around the Chromaprint `fpcalc` CLI used by AcoustID.
+# SYSTEM DEPENDENCY: `fpcalc` must be on PATH. macOS: `brew install chromaprint`.
+# Linux: `apt-get install libchromaprint-tools`. Without fpcalc the fingerprint
+# gate degrades to a hard error (loud failure — see SOUL.md "loud fallbacks").
+rapidfuzz
+pyacoustid
